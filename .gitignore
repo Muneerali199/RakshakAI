@@ -13,3 +13,6 @@ dataset/test.csv
 *.egg-info/
 dist/
 build/
+models/rakshakai-v1/*.pt
+models/rakshakai-v1/*.onnx
+*.log
