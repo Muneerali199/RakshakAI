@@ -1,20 +1,27 @@
 #!/bin/bash
-# RakshakAI training launcher — runs in background
+# RakshakAI v2 training — improved dataset, class-weighted loss, more epochs
 cd "$(dirname "$0")"
 export PYTHONWARNINGS="ignore"
-nohup python3 train_lightweight.py \
-  --num-samples 2000 \
-  --d-model 128 \
-  --num-heads 4 \
-  --d-ff 256 \
+
+echo "Starting RakshakAI v2 training..."
+echo "Config: 8000 samples, d_model=192, 4 layers, 25 epochs"
+echo "Log: training_v2.log"
+echo ""
+
+nohup python3 -m rakshakai.train \
+  --num-samples 8000 \
+  --d-model 192 \
+  --num-heads 6 \
+  --d-ff 384 \
   --num-layers 4 \
   --vocab-size 8000 \
   --max-length 256 \
-  --batch-size 8 \
-  --epochs 10 \
-  --lr 2e-4 \
+  --batch-size 12 \
+  --epochs 25 \
+  --lr 3e-4 \
+  --dropout 0.15 \
   --output-dir models/rakshakai-v1/ \
-> training_run.log 2>&1 &
-echo "Training PID: $!"
-echo "Log: training_run.log"
-echo "Monitor: tail -f training_run.log"
+> training_v2.log 2>&1 &
+
+echo "PID: $!"
+echo "Monitor: tail -f training_v2.log"
