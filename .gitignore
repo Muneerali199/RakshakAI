@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+cg-ml-env/
+rakshakai-env/
+models/
+*.log
+*.zip
+dataset/train.csv
+dataset/val.csv
+dataset/test.csv
+*.egg-info/
+dist/
+build/
