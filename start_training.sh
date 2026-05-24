@@ -1,14 +1,15 @@
 #!/bin/bash
-# RakshakAI v2 training — improved dataset, class-weighted loss, more epochs
+# RakshakAI v3 training — improved data, 8000 samples, target 85%+
 cd "$(dirname "$0")"
 export PYTHONWARNINGS="ignore"
+export TRAINING_RUN=1
 
-echo "Starting RakshakAI v2 training..."
-echo "Config: 8000 samples, d_model=192, 4 layers, 25 epochs"
-echo "Log: training_v2.log"
-echo ""
+echo "Starting RakshakAI v3 training..."
+echo "Config: 8000 samples, d_model=192, 4 layers, 25 epochs, improved data"
+echo "Log: training_v3.log"
+date
 
-nohup python3 -m rakshakai.train \
+python3 -m rakshakai.train \
   --num-samples 8000 \
   --d-model 192 \
   --num-heads 6 \
@@ -21,7 +22,8 @@ nohup python3 -m rakshakai.train \
   --lr 3e-4 \
   --dropout 0.15 \
   --output-dir models/rakshakai-v1/ \
-> training_v2.log 2>&1 &
+  2>&1 | tee training_v3.log
 
-echo "PID: $!"
-echo "Monitor: tail -f training_v2.log"
+echo ""
+echo "Training complete!"
+date

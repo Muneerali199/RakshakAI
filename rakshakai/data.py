@@ -84,12 +84,18 @@ TEMPLATES = {
             'sql = f"SELECT * FROM users WHERE email = \'{email}\'"',
             'conn.execute("DELETE FROM posts WHERE id = " + str(post_id))',
             'rows = db.select("SELECT * FROM products WHERE category = " + cat)',
+            'cur.execute("UPDATE users SET pass = \'" + new_pw + "\' WHERE id = " + uid)',
+            'db.run("INSERT INTO logs VALUES(\'" + msg + "\', \'" + level + "\')")',
+            'query = f"SELECT {fields} FROM {table} WHERE id = {uid}"',
+            'cursor.execute("SELECT * FROM users WHERE id = \'" + request.GET["id"] + "\'")',
         ],
         "javascript": [
             'db.query("SELECT * FROM users WHERE id = " + req.params.id)',
             'const query = `SELECT * FROM products WHERE id = ${productId}`',
             'connection.query("SELECT * FROM users WHERE name = \'" + name + "\'")',
             'pool.query("UPDATE items SET price = " + amount)',
+            'const sql = `INSERT INTO users VALUES(\'${email}\', \'${pass}\')`',
+            'client.query("DELETE FROM orders WHERE id = " + order_id, callback)',
         ],
         "java": [
             'String q = "SELECT * FROM users WHERE id = " + userId;',
@@ -106,6 +112,8 @@ TEMPLATES = {
             'return "<div>" + user_input + "</div>"',
             'Response.write(user_name)',
             'template.render(user_content)',
+            'return f"<h1>{title}</h1><p>{body}</p>"',
+            'print("<script>" + code + "</script>")',
         ],
         "javascript": [
             'document.getElementById("output").innerHTML = userInput',
@@ -113,6 +121,9 @@ TEMPLATES = {
             '$("#div").html(userContent)',
             'render("<span>" + data + "</span>")',
             'document.write(user_name)',
+            'el.insertAdjacentHTML("beforeend", unsafeHTML)',
+            'ReactDOM.render(htmlContent, container)',
+            '$("body").append(userHtml)',
         ],
         "java": [
             'response.getWriter().write(userInput)',
@@ -307,6 +318,9 @@ CLEAN_TEMPLATES = {
         'ip = validate_ip(host)',
         'allowed = ["css", "js", "png"]\nif ext in allowed: pass',
         'quote = conn.escape_string(username)',
+        'cur.execute("SELECT * FROM users WHERE id = %s", [uid])',
+        'db.query("SELECT * FROM products WHERE id = $1", [product_id])',
+        'import bleach\nclean_html = bleach.clean(user_html)',
     ],
     "javascript": [
         'db.query("SELECT * FROM users WHERE id = ?", [userId])',
