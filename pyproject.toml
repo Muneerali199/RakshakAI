@@ -4,29 +4,74 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "rakshakai"
-version = "0.2.0"
-description = "Lightweight ML model for code vulnerability detection — India's First Security AI"
+version = "0.4.0"
+description = "RakshakAI — security AI: a CPU classifier (v1) and a security-specialized coding LLM (v2), both for vulnerability detection and secure code generation."
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "RakshakAI", email = "rakshakai@users.noreply.github.com"},
 ]
-keywords = ["security", "vulnerability-detection", "code-scanning", "ml", "lightweight"]
+keywords = [
+    "security", "vulnerability-detection", "code-scanning", "ml",
+    "lightweight", "llm", "qwen", "qlora", "mi300x", "rocm",
+    "cwe", "sast", "ai", "code-review",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Code Generators",
 ]
 
 dependencies = [
+    # v1 (CPU)
     "torch>=2.0.0",
     "numpy>=1.24.0",
     "scikit-learn>=1.3.0",
+    # v1 HTTP
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    # v2 (GPU/ROCm) — installed via `pip install -r v2/requirements-v2.txt`
+    # not listed here because PyTorch ROCm wheels must come from the
+    # AMD index and bitsandbytes is platform-specific.
 ]
+
+[project.optional-dependencies]
+v2 = [
+    "transformers>=4.43",
+    "peft>=0.11",
+    "accelerate>=0.33",
+    "trl>=0.9.6",
+    "datasets>=2.20",
+    "bitsandbytes>=0.43.3",
+    "flash-attn>=2.5.9",
+    "vllm>=0.5.3",
+    "autoawq>=0.2.5",
+    "axolotl==0.7.0",
+    "deepspeed>=0.14",
+    "wandb>=0.17",
+    "pyarrow>=16",
+    "datasketch>=1.6",
+    "langdetect>=1.0.9",
+    "tree-sitter>=0.21",
+    "tree-sitter-languages",
+    "tiktoken>=0.7",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
+[project.scripts]
+rakshakai-v1 = "server:main"
+rakshakai-v2 = "v2.deploy.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Muneerali199/RakshakAI"
@@ -34,4 +79,4 @@ Documentation = "https://github.com/Muneerali199/RakshakAI#readme"
 Source = "https://github.com/Muneerali199/RakshakAI"
 
 [tool.setuptools.packages.find]
-include = ["rakshakai*"]
+include = ["rakshakai*", "v2*"]

@@ -82,6 +82,11 @@ def train(config: dict) -> float:
         dropout=config["dropout"],
         pad_token_id=tokenizer.pad_id,
     )
+    resume_path = config.get("resume")
+    if resume_path and os.path.exists(resume_path):
+        ckpt = torch.load(resume_path, map_location="cpu")
+        model.load_state_dict(ckpt["model_state_dict"])
+        logger.info(f"Resumed from {resume_path} (epoch {ckpt.get('epoch', '?')})")
     params = sum(p.numel() for p in model.parameters())
     logger.info(f"Model: {params:,} params")
 
@@ -225,6 +230,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--output-dir", type=str, default="models/rakshakai-v1/")
     parser.add_argument("--tokenizer-path", type=str, default="models/rakshak_tokenizer.json")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint to resume/fine-tune from")
 
     args = parser.parse_args()
     config = vars(args)

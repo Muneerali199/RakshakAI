@@ -1,0 +1,96 @@
+{
+  "name": "rakshakai-v2",
+  "displayName": "RakshakAI v2 — Security Copilot",
+  "description": "AI security reviewer powered by RakshakAI v2. Scans your code on save and reviews PR diffs.",
+  "version": "2.0.0",
+  "publisher": "RakshakAI",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "security",
+    "vulnerability",
+    "cwe",
+    "sast",
+    "ai",
+    "code-review"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:java",
+    "onLanguage:go",
+    "onLanguage:rust",
+    "onLanguage:c",
+    "onLanguage:cpp"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "RakshakAI v2",
+      "properties": {
+        "rakshakai.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "URL of the running RakshakAI v2 server"
+        },
+        "rakshakai.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan the active editor on save"
+        },
+        "rakshakai.severityFilter": {
+          "type": "array",
+          "default": ["critical", "high", "medium"],
+          "description": "Show diagnostics only at these severities"
+        },
+        "rakshakai.minConfidence": {
+          "type": "number",
+          "default": 0.6,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Hide findings below this confidence"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "rakshakai.scanFile",
+        "title": "RakshakAI: Scan Current File"
+      },
+      {
+        "command": "rakshakai.scanWorkspace",
+        "title": "RakshakAI: Scan Workspace"
+      },
+      {
+        "command": "rakshakai.showLastFinding",
+        "title": "RakshakAI: Show Last Finding"
+      },
+      {
+        "command": "rakshakai.applyPatch",
+        "title": "RakshakAI: Apply Suggested Patch"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.0"
+  }
+}

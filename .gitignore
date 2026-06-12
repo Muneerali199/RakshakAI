@@ -1,18 +1,76 @@
+# --- Python ---
 __pycache__/
 *.pyc
-.DS_Store
-.env
-cg-ml-env/
-rakshakai-env/
-models/
-*.log
-*.zip
-dataset/train.csv
-dataset/val.csv
-dataset/test.csv
+*.pyo
 *.egg-info/
 dist/
 build/
-models/rakshakai-v1/*.pt
-models/rakshakai-v1/*.onnx
+
+# --- Virtual environments ---
+cg-ml-env/
+rakshakai-env/
+venv/
+.venv/
+env/
+
+# --- Environment ---
+.env
+.env.*
+*.env
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Checkpoints / outputs / logs ---
+checkpoints/
+outputs/
+v2/outputs/
+logs/
 *.log
+
+# --- Dataset directories (generated, large) ---
+dataset/
+v2/inputs/
+v2/inputs/datasets/raw/
+v2/inputs/datasets/instruct/
+v2/inputs/datasets/pack/
+v2/inputs/datasets/downloads/
+v1-augmented.jsonl
+
+# --- Specific old generated datasets ---
+dataset/train.csv
+dataset/val.csv
+dataset/test.csv
+
+# --- Model weights ---
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.awq
+*.onnx
+
+# --- Cache ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# --- Node (for future integrations) ---
+node_modules/
+
+# --- Backup files ---
+*.bak
+
+# --- Old train artifacts ---
+train_lightweight.py.bak
+.rakshakai/
