@@ -36,5 +36,5 @@ fi
 
 echo "[train] phase=$PHASE  config=$CONFIG  resume_from=${RESUME_FROM:-none}"
 
-cd /workspace/rakshakai
+cd /workspace/RakshakAI
 accelerate launch -m axolotl.cli.train "$CONFIG" $EXTRA

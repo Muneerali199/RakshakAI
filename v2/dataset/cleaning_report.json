@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-06-06T21:15:46+00:00",
+  "in_dir": "v2/inputs/datasets/raw",
+  "out_dir": "v2/inputs/datasets/clean",
+  "near_dup_threshold": 0.85,
+  "stats": {
+    "total_in": 138480,
+    "parse_errors": 0,
+    "non_utf8": 0,
+    "null_bytes": 0,
+    "too_short": 0,
+    "too_long": 0,
+    "missing_required": 0,
+    "bad_language": 0,
+    "bad_license": 0,
+    "harmful_content": 0,
+    "schema_violations": 48,
+    "exact_duplicates": 10835,
+    "near_duplicates": 31547,
+    "kept": 96050
+  },
+  "rejection_breakdown": {
+    "schema:explanation too long (1502 chars)": 32,
+    "schema:explanation too long (1504 chars)": 14,
+    "schema:explanation too long (1508 chars)": 1,
+    "schema:explanation too long (1506 chars)": 1
+  },
+  "summary_text": "\nCleaning summary\n================\n  total records read       :  138480\n  parse errors             :       0\n  non-utf8 / corrupted     :       0\n    null bytes             :       0\n    non-utf8               :       0\n  too short / too long     :       0\n    too short (<30 chars)        :       0\n    too long  (>100000 chars)      :       0\n  bad language             :       0\n  unsafe license (GPL/etc) :       0\n  harmful content (PII/key):       0\n  schema violations        :      48\n  exact duplicates dropped :   10835\n  near  duplicates dropped :   31547\n  KEPT                     :   96050\n\nTop rejection reasons:\n       32  schema:explanation too long (1502 chars)\n       14  schema:explanation too long (1504 chars)\n        1  schema:explanation too long (1508 chars)\n        1  schema:explanation too long (1506 chars)"
+}

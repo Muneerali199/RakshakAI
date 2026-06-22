@@ -1,14 +1,17 @@
-# RakshakAI v2 — Phase B: SFT on multi-language snippets + secure fixes
-# Builds on Phase A LoRA. Continues training.
-# Data: SecurityEval + Juliet + PrimeVul test pairs + CVE descriptions
-# Time: ~2.5 h on 1× MI300X → ~$5
+# RakshakAI v2 — Phase B: Multi-task SFT on 192K balanced samples
+# Builds on Qwen2.5-Coder-7B-Instruct. Does NOT continue from Phase A.
+# Data: 192K balanced (50/50 vuln/clean) with CoT reasoning traces
+# Time: ~8 h on 1× MI300X → ~$16
+#
+# CRITICAL: Use adamw_8bit (NOT paged_adamw_8bit — causes GPU memory fault on ROCm).
+# Inference must use 8-bit (NOT 4-bit NF4 — produces garbage on ROCm/bnb 0.49.2).
 
 base_model: Qwen/Qwen2.5-Coder-7B-Instruct
 model_type: Qwen2ForCausalLM
 tokenizer_type: Qwen2Tokenizer
 
 # --- Output ---
-output_dir: /workspace/rakshakai/v2/outputs/runs/phase_b
+output_dir: /workspace/RakshakAI/v2/outputs/runs/phase_b
 run_name: rakshakai-v2-phaseB
 
 # --- Loading ---
@@ -17,7 +20,7 @@ bnb_4bit_quant_type: nf4
 bnb_4bit_use_double_quant: true
 bnb_4bit_compute_dtype: bfloat16
 
-# --- LoRA (continue from phase A) ---
+# --- LoRA (fresh, not from Phase A) ---
 adapter: lora
 lora_r: 64
 lora_alpha: 128
@@ -36,9 +39,9 @@ micro_batch_size: 6
 gradient_accumulation_steps: 6
 eval_batch_size: 6
 
-# --- Optimizer ---
-optimizer: paged_adamw_8bit
-lr: 1.0e-4        # lower than A: refine, don't over-write
+# --- Optimizer (!!! paged_adamw_8bit CRASHES on ROCm !!!) ---
+optimizer: adamw_8bit
+lr: 1.0e-4
 lr_scheduler: cosine
 warmup_ratio: 0.03
 weight_decay: 0.0
@@ -52,7 +55,7 @@ neftune_noise_alpha: 5
 
 # --- Data ---
 datasets:
-  - path: /workspace/rakshakai/v2/inputs/datasets/pack/phase_b
+  - path: /workspace/RakshakAI/v2/inputs/datasets/phase_b/pack
     type: custom_jsonl
     field: messages
     roles:
@@ -60,25 +63,24 @@ datasets:
       assistant: assistant
       system: system
 
-dataset_prepared_path: /workspace/rakshakai/v2/inputs/datasets/pack/phase_b_prepared
+dataset_prepared_path: /workspace/RakshakAI/v2/inputs/datasets/phase_b/pack_prepared
 
 # --- Eval / save ---
-val_set_size: 0.02
-evals_per_epoch: 4
-eval_steps: 80
-save_steps: 80
-save_total_limit: 3
+val_set_size: auto
+eval_steps: 100
+save_steps: 100
+save_total_limit: 5
 save_strategy: steps
 evaluation_strategy: steps
 load_best_model_at_end: true
 metric_for_best_model: eval_loss
 greater_is_better: false
-early_stopping_patience: 5
+early_stopping_patience: 10
 early_stopping_threshold: 0.001
 
-# --- Steps ---
-max_steps: 3000
-warmup_steps: 90
+# --- Steps (up to 3 epochs; early stopping will cut short if val loss plateaus) ---
+num_epochs: 3
+warmup_steps: 64
 
 # --- Logging ---
 logging_steps: 10
@@ -87,6 +89,6 @@ wandb_project: rakshakai-v2
 wandb_run_name: phaseB-qwen7b-qlora
 
 # --- Misc ---
-seed: 43
+seed: 42
 special_tokens:
   pad_token: "<|endoftext|>"
