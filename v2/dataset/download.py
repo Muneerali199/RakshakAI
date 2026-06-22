@@ -70,6 +70,27 @@ SOURCES = {
         "url": "https://github.com/OWASP-Benchmark/BenchmarkJava.git",
         "subdir": "src/main/java/org/owasp/benchmark",
     },
+    # --- Phase B additions (language balance + paired vuln/patch) ---
+    "cvefixes": {
+        "kind": "hf_dataset",
+        "repo_id": "starsofchance/CVEfixes_v1.0.8",
+        "revision": "main",
+    },
+    "crossvul_cpp": {
+        "kind": "hf_dataset",
+        "repo_id": "xin1997/crossvul-cpp_all_only_input",
+        "revision": "main",
+    },
+    "crossvul_java": {
+        "kind": "hf_dataset",
+        "repo_id": "xin1997/crossvul-java_all_only_input",
+        "revision": "main",
+    },
+    "crossvul_python": {
+        "kind": "hf_dataset",
+        "repo_id": "xin1997/crossvul-python_all_only_input",
+        "revision": "main",
+    },
 }
 
 

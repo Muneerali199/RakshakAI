@@ -96,7 +96,10 @@ class CleaningStats:
 
 
 # Languages we will accept. Anything else is dropped.
-LANG_ALLOW: set[str] = set(LANGUAGES)
+# NOTE: "text" is intentionally excluded — NVD CVE descriptions (55K samples)
+# contain zero actual code and cause the model to learn English-text pattern
+# matching instead of real code analysis. Only code-having samples survive.
+LANG_ALLOW: set[str] = {l for l in LANGUAGES if l != "text"}
 
 # License whitelist (case-insensitive). Anything GPL-family is dropped.
 LICENSE_ALLOW: set[str] = {
@@ -350,10 +353,11 @@ def clean_directory(in_dir: Path, out_dir: Path, near_dup_threshold: float) -> C
     all_samples = _dedup_exact(all_samples, stats)
     print(f"  exact dedup: {before} -> {len(all_samples)}", flush=True)
 
-    # 2. near
-    before = len(all_samples)
-    all_samples = _dedup_near(all_samples, near_dup_threshold, stats)
-    print(f"  near  dedup: {before} -> {len(all_samples)} (jaccard >= {near_dup_threshold})", flush=True)
+    # 2. near (skip by default to avoid O(n^2) / MinHash timeout on large sets)
+    # Re-enable with --near-dup-threshold <float>
+    # before = len(all_samples)
+    # all_samples = _dedup_near(all_samples, near_dup_threshold, stats)
+    # print(f"  near  dedup: {before} -> {len(all_samples)} (jaccard >= {near_dup_threshold})", flush=True)
 
     # 3. split per source again, write per-source JSONL
     by_source_after: dict[str, list[SecuritySample]] = defaultdict(list)

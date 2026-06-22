@@ -65,19 +65,23 @@ If the code is secure, set is_vulnerable=false, severity="clean", and all other 
 # ---------------------------------------------------------------------------
 
 def _load_clean_vuln() -> list[SecuritySample]:
-    """Load all vulnerable samples from clean/ directory."""
+    """Load ALL vulnerable samples from clean/ directory (all lines in each file)."""
     samples = []
     paths = sorted(CLEAN_DIR.rglob("*.jsonl"))
     for p in paths:
         try:
             with p.open("r") as f:
-                d = json.loads(f.readline())
-            s = SecuritySample.from_dict(d)
-            if s.is_vulnerable:
-                samples.append(s)
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    d = json.loads(line)
+                    s = SecuritySample.from_dict(d)
+                    if s.is_vulnerable:
+                        samples.append(s)
         except Exception:
             continue
-    print(f"[load] {len(samples)} vulnerable samples from clean/")
+    print(f"[load] {len(samples)} vulnerable samples from clean/ ({len(paths)} files)")
     return samples
 
 
