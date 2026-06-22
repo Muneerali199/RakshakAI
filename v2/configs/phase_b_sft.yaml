@@ -1,7 +1,7 @@
-# RakshakAI v2 — Phase B: Multi-task SFT on 192K balanced samples
+# RakshakAI v2 — Phase B: Multi-task SFT on 57K balanced samples
 # Builds on Qwen2.5-Coder-7B-Instruct. Does NOT continue from Phase A.
-# Data: 192K balanced (50/50 vuln/clean) with CoT reasoning traces
-# Time: ~8 h on 1× MI300X → ~$16
+# Data: 57K balanced (50/50 vuln/clean) with CoT reasoning traces
+# Time: ~3 h on 1× MI300X → ~$6
 #
 # CRITICAL: Use adamw_8bit (NOT paged_adamw_8bit — causes GPU memory fault on ROCm).
 # Inference must use 8-bit (NOT 4-bit NF4 — produces garbage on ROCm/bnb 0.49.2).
@@ -80,7 +80,6 @@ early_stopping_threshold: 0.001
 
 # --- Steps (up to 3 epochs; early stopping will cut short if val loss plateaus) ---
 num_epochs: 3
-warmup_steps: 64
 
 # --- Logging ---
 logging_steps: 10

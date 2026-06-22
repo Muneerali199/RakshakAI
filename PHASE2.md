@@ -2,10 +2,11 @@
 
 ## What We Built (Pre-Training Prep — Complete ✅)
 
-### Dataset: 192K Balanced Multi-Task Samples
-- **Size**: 192K training samples, 50/50 vulnerable/clean split
-- **Sources**: NVD (74K), BigVul (49K), PrimeVul (40K), OSV (21K), Devign (7K), OWASP Benchmark
-- **Languages**: C (100K), text/CVE descriptions (55K), JavaScript (9K), Java (8K), PHP (6K), Python (4K), Rust (3K), Go (2.5K), C# (2K), Swift (1.5K), Ruby (1K), Kotlin + more
+### Dataset: 57K Balanced Multi-Task Samples
+- **Size**: 57,772 training samples, 50/50 vulnerable/clean split (limited by non-vuln unique fingerprints)
+- **Sources**: BigVul (33K), PrimeVul (17K), OSV (2.7K), NVD (2.5K, actual code only), Devign (2K), OWASP Benchmark (226), V1 augmented (68), SecurityEval (33)
+- **Languages**: C (52K), Java (1.2K), JavaScript (1.1K), PHP (767), Python (665), Go (400), Rust (332), C# (318), Swift (169), Ruby (100), C++ (81), Kotlin (25)
+- **Note**: Text-only NVD CVE descriptions (55K samples) removed — they caused the model to learn English text matching instead of code analysis. CVEfixes + CrossVul will be added on the droplet for more non-vuln diversity and language balance.
 - **Format**: Chat-style with system/user/assistant + packed (_text) for Axolotl training
 - **Chain-of-Thought**: Each sample includes a 5-step CoT reasoning trace before the JSON answer
 
