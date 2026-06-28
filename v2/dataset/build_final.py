@@ -22,6 +22,7 @@ random.seed(42)
 
 META_ENRICHED = Path("inputs/datasets/phase_b/meta_enriched")
 NONVULN_DIR = Path("inputs/datasets/nonvuln")
+EXTRA_VULN_DIR = Path("inputs/datasets/extra_vuln")
 OUT_DIR = Path("inputs/datasets/phase_b")
 OUT_META = OUT_DIR / "meta"
 OUT_INSTRUCT = OUT_DIR / "instruct"
@@ -63,7 +64,23 @@ def load_enriched_vuln() -> list[dict]:
                     samples.append(d)
                 except json.JSONDecodeError:
                     continue
-    print(f"[load] {len(samples)} enriched vuln samples from meta_enriched/")
+    # Also load from extra_vuln (CrossVul, synthetic, etc.)
+    if EXTRA_VULN_DIR.exists():
+        for p in sorted(EXTRA_VULN_DIR.rglob("*.jsonl")):
+            with open(p) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                        if not d.get("is_vulnerable", True):
+                            continue
+                        d["split"] = "train"
+                        samples.append(d)
+                    except json.JSONDecodeError:
+                        continue
+    print(f"[load] {len(samples)} enriched vuln samples from meta_enriched/ + extra_vuln/")
     return samples
 
 
@@ -205,8 +222,8 @@ def build_final():
         return selected
 
     n = min(len(deduped_vuln), len(deduped_nonvuln))
-    # Target 60/40 vuln/non-vuln split for optimal vuln rate score
-    target_vuln = min(len(deduped_vuln), n)
+    # Target 300K @ 60/40 vuln/non-vuln split
+    target_vuln = min(180_000, len(deduped_vuln))
     target_nonvuln = min(int(target_vuln * 0.667), len(deduped_nonvuln))
     total_target = target_vuln + target_nonvuln
 

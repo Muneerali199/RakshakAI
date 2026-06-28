@@ -1,499 +1,277 @@
-"""
-RakshakAI v2 — Synthesize vulnerable code from clean code templates.
-
-Takes clean/non-vulnerable code and deterministically injects common
-vulnerabilities (buffer overflow, SQL injection, XSS, command injection,
-path traversal, use-after-free, format string, etc.).
-
-Generates: patched version, CWE, severity, explanation, secure_fix.
-
-Output: v2/inputs/datasets/synthetic_vuln.jsonl
-"""
-from __future__ import annotations
-
-import json
-import random
-import sys
+"""Generate synthetic vulnerable + fixed code pairs across non-C languages."""
+import json, hashlib, random
 from pathlib import Path
+from collections import Counter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from v2.dataset.schema import SecuritySample  # noqa: E402
+rng = random.Random(42)
+OUT = Path("inputs/datasets/extra_vuln")
+OUT.mkdir(parents=True, exist_ok=True)
+def fp(c): return hashlib.md5((c or "").encode()).hexdigest()
 
-random.seed(2024)
-OUT_PATH = Path("v2/inputs/datasets/synthetic_vuln.jsonl")
+# ── Templates: list of (lang, cwe, vuln_template, fix_template) ──
+# Templates use {n} for unique ID, {{ }} for literal braces
 
-# Template-based vulnerability injection patterns
-# Each: (language, clean_code, patched_code, cwe, severity, explanation, fix_desc)
+TEMPLATES = []
 
-PATTERNS = [
-    # ---- C/C++ patterns ----
-    {
-        "language": "c",
-        "vulnerable_code": """void copy_data(char *input) {{
-    char buffer[64];
-    strcpy(buffer, input);
-    printf("Copied: %s\\n", buffer);
-}}""",
-        "patched_code": """void copy_data(char *input) {{
-    char buffer[64];
-    strncpy(buffer, input, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\\0';
-    printf("Copied: %s\\n", buffer);
-}}""",
-        "cwe": "CWE-121",
-        "severity": "high",
-        "explanation": "Stack buffer overflow: strcpy does not bounds-check input length against the 64-byte buffer, allowing stack smashing.",
-        "secure_fix": "Replace strcpy with strncpy and ensure null termination, or use dynamically allocated memory.",
-    },
-    {
-        "language": "c",
-        "vulnerable_code": """void process_string(char *str) {{
-    printf(str);
-}}""",
-        "patched_code": """void process_string(char *str) {{
-    printf("%s", str);
-}}""",
-        "cwe": "CWE-134",
-        "severity": "high",
-        "explanation": "Format string vulnerability: user-controlled string is passed directly as the format argument to printf, allowing arbitrary memory read/write.",
-        "secure_fix": "Always use a fixed format string like printf(\"%s\", str) instead of printf(str).",
-    },
-    {
-        "language": "c",
-        "vulnerable_code": """int get_value() {{
-    int *ptr = malloc(sizeof(int));
-    *ptr = 42;
-    free(ptr);
-    return *ptr;
-}}""",
-        "patched_code": """int get_value() {{
-    int *ptr = malloc(sizeof(int));
-    if (!ptr) return -1;
-    *ptr = 42;
-    int val = *ptr;
-    free(ptr);
-    return val;
-}}""",
-        "cwe": "CWE-416",
-        "severity": "high",
-        "explanation": "Use-after-free: memory at ptr is accessed after free(), leading to undefined behavior and potential code execution.",
-        "secure_fix": "Access the value before freeing, or set ptr = NULL after free and check for NULL before dereferencing.",
-    },
-    {
-        "language": "c",
-        "vulnerable_code": """int authenticate(char *user, char *pass) {{
-    char cmd[256];
-    sprintf(cmd, "grep '%s' /etc/passwd | cut -d: -f2", user);
-    return system(cmd);
-}}""",
-        "patched_code": """int authenticate(char *user, char *pass) {{
-    // Use PAM or a proper authentication library
-    return pam_authenticate(user, pass);
-}}""",
-        "cwe": "CWE-78",
-        "severity": "critical",
-        "explanation": "OS command injection: user-controlled username is interpolated into a shell command without sanitization.",
-        "secure_fix": "Avoid shell commands entirely. Use library APIs like PAM for authentication instead of system().",
-    },
-    {
-        "language": "c",
-        "vulnerable_code": """int read_config() {{
-    FILE *f = fopen("/etc/app/config.cfg", "r");
-    char buf[128];
-    fread(buf, 1, sizeof(buf), f);
-    return 0;
-}}""",
-        "patched_code": """int read_config() {{
-    FILE *f = fopen("/etc/app/config.cfg", "r");
-    if (!f) return -1;
-    char buf[128] = {{0}};
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    if (n == 0 && ferror(f)) {{ fclose(f); return -1; }}
-    buf[n] = '\\0';
-    fclose(f);
-    return 0;
-}}""",
-        "cwe": "CWE-476",
-        "severity": "medium",
-        "explanation": "NULL pointer dereference: fopen return value is not checked before use, causing crash if file doesn't exist.",
-        "secure_fix": "Always check fopen() return value for NULL before using the file pointer.",
-    },
-    {
-        "language": "c",
-        "vulnerable_code": """void parse_header(char *data) {{
-    int len = data[0];
-    char buf[64];
-    memcpy(buf, data + 1, len);
-}}""",
-        "patched_code": """void parse_header(char *data, size_t data_len) {{
-    if (data_len < 1) return;
-    int len = data[0];
-    if (len <= 0 || len > 64 || len > (int)(data_len - 1)) return;
-    char buf[64];
-    memcpy(buf, data + 1, len);
-}}""",
-        "cwe": "CWE-787",
-        "severity": "high",
-        "explanation": "Out-of-bounds write: len from attacker-controlled data is used as memcpy length without validation against buffer size.",
-        "secure_fix": "Validate len against both the destination buffer (64) and available source data before memcpy.",
-    },
-    # ---- Python patterns ----
-    {
-        "language": "python",
-        "vulnerable_code": """def lookup_user(user_id):
-    import sqlite3
-    conn = sqlite3.connect('users.db')
-    cur = conn.cursor()
-    cur.execute(f"SELECT * FROM users WHERE id = '{user_id}'")
-    return cur.fetchone()""",
-        "patched_code": """def lookup_user(user_id):
-    import sqlite3
-    conn = sqlite3.connect('users.db')
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    return cur.fetchone()""",
-        "cwe": "CWE-89",
-        "severity": "critical",
-        "explanation": "SQL injection: user_id is interpolated directly into SQL query, allowing malicious input like ' OR '1'='1 to bypass authentication.",
-        "secure_fix": "Use parameterized queries with placeholders (?) instead of string formatting.",
-    },
-    {
-        "language": "python",
-        "vulnerable_code": """def render_page(name):
-    return f"<html><body><h1>Welcome {{name}}</h1></body></html>" """,
-        "patched_code": """import html
+def add(lang, cwe, v_template, f_template):
+    TEMPLATES.append((lang, cwe, v_template, f_template))
 
-def render_page(name):
-    safe_name = html.escape(name)
-    return f"<html><body><h1>Welcome {{safe_name}}</h1></body></html>" """,
-        "cwe": "CWE-79",
-        "severity": "high",
-        "explanation": "Cross-site scripting (XSS): user-controlled name is rendered directly into HTML without escaping, allowing script injection.",
-        "secure_fix": "Use html.escape() or a template engine with auto-escaping (Jinja2, Django templates).",
-    },
-    {
-        "language": "python",
-        "vulnerable_code": """import subprocess
+# ══ PYTHON ══
+add("python", "CWE-89",
+    "def get_user_{n}(user_id):\n    conn = sqlite3.connect(\"db.sqlite\")\n    cursor = conn.cursor()\n    query = \"SELECT * FROM users WHERE id = \" + user_id\n    cursor.execute(query)\n    return cursor.fetchall()",
+    "def get_user_{n}(user_id):\n    conn = sqlite3.connect(\"db.sqlite\")\n    cursor = conn.cursor()\n    query = \"SELECT * FROM users WHERE id = ?\"\n    cursor.execute(query, (user_id,))\n    return cursor.fetchall()")
 
-def ping(host):
-    result = subprocess.check_output(f"ping -c 1 {host}", shell=True)
-    return result.decode()""",
-        "patched_code": """import subprocess
+add("python", "CWE-78",
+    "def ping_host_{n}(hostname):\n    result = os.system(\"ping -c 4 \" + hostname)\n    return result",
+    "def ping_host_{n}(hostname):\n    import subprocess\n    result = subprocess.run([\"ping\", \"-c\", \"4\", hostname], capture_output=True, text=True)\n    return result.returncode")
 
-def ping(host):
-    result = subprocess.check_output(["ping", "-c", "1", host])
-    return result.decode()""",
-        "cwe": "CWE-78",
-        "severity": "critical",
-        "explanation": "OS command injection: host parameter is interpolated into shell command, allowing commands like '127.0.0.1; rm -rf /'.",
-        "secure_fix": "Use subprocess with argument list (list form, not string) and avoid shell=True.",
-    },
-    {
-        "language": "python",
-        "vulnerable_code": """def load_data(filename):
-    import pickle
-    with open(filename, 'rb') as f:
-        return pickle.load(f)""",
-        "patched_code": """def load_data(filename):
-    import json
-    with open(filename, 'r') as f:
-        return json.load(f)""",
-        "cwe": "CWE-502",
-        "severity": "critical",
-        "explanation": "Insecure deserialization: pickle.load() can execute arbitrary Python code during deserialization.",
-        "secure_fix": "Use safe serialization formats (JSON) or implement signature verification for pickle data.",
-    },
-    {
-        "language": "python",
-        "vulnerable_code": """import os
+add("python", "CWE-22",
+    "def read_file_{n}(filename):\n    with open(\"/var/data/\" + filename, \"r\") as f:\n        return f.read()",
+    "def read_file_{n}(filename):\n    import os\n    safe_path = os.path.realpath(\"/var/data/\" + filename)\n    if not safe_path.startswith(\"/var/data/\"):\n        raise ValueError(\"Invalid path\")\n    with open(safe_path, \"r\") as f:\n        return f.read()")
 
-def delete_file(path):
-    os.remove(path)""",
-        "patched_code": """import os
+add("python", "CWE-79",
+    "def render_comment_{n}(request):\n    comment = request.GET.get(\"comment\", \"\")\n    return HttpResponse(f\"<div>{comment}</div>\")",
+    "def render_comment_{n}(request):\n    from django.utils.html import escape\n    comment = escape(request.GET.get(\"comment\", \"\"))\n    return HttpResponse(f\"<div>{comment}</div>\")")
 
-def delete_file(path):
-    safe_dir = '/var/data/files/'
-    full_path = os.path.normpath(os.path.join(safe_dir, path))
-    if not full_path.startswith(os.path.normpath(safe_dir)):
-        raise ValueError("Path traversal detected")
-    os.remove(full_path)""",
-        "cwe": "CWE-22",
-        "severity": "high",
-        "explanation": "Path traversal: user-controlled path is passed directly to os.remove() without validation, allowing deletion of arbitrary files via '../' sequences.",
-        "secure_fix": "Check that the resolved absolute path stays within an allowed directory using os.path.realpath() and path prefix check.",
-    },
-    {
-        "language": "python",
-        "vulnerable_code": """def execute(code):
-    return eval(code)""",
-        "patched_code": """def execute(code):
-    import ast
-    tree = ast.parse(code, mode='eval')
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Expression, ast.Constant, ast.BinOp, ast.UnaryOp, ast.Name)):
-            raise ValueError("Unsafe code")
-    return eval(code)""",
-        "cwe": "CWE-94",
-        "severity": "critical",
-        "explanation": "Code injection: eval() executes arbitrary Python expressions from user input, allowing full system compromise.",
-        "secure_fix": "Avoid eval() entirely. Use ast.literal_eval() for safe evaluation, or parse with AST whitelist.",
-    },
-    # ---- JavaScript patterns ----
-    {
-        "language": "javascript",
-        "vulnerable_code": """function saveComment(comment) {
-    document.getElementById('comments').innerHTML += comment;
-}""",
-        "patched_code": """function saveComment(comment) {
-    const el = document.getElementById('comments');
-    el.textContent += comment;
-}""",
-        "cwe": "CWE-79",
-        "severity": "high",
-        "explanation": "DOM-based XSS: innerHTML renders user comment as HTML, allowing script injection via <script> tags or event handlers.",
-        "secure_fix": "Use textContent instead of innerHTML, or sanitize with DOMPurify before insertion.",
-    },
-    {
-        "language": "javascript",
-        "vulnerable_code": """app.get('/user/:id', (req, res) => {
-    const query = 'SELECT * FROM users WHERE id = ' + req.params.id;
-    db.query(query, (err, results) => { res.json(results); });
-});""",
-        "patched_code": """app.get('/user/:id', (req, res) => {
-    db.query('SELECT * FROM users WHERE id = ?', [req.params.id], (err, results) => {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json(results);
-    });
-});""",
-        "cwe": "CWE-89",
-        "severity": "critical",
-        "explanation": "SQL injection: req.params.id is concatenated into SQL query, allowing '1 OR 1=1' style attacks.",
-        "secure_fix": "Use parameterized queries (prepared statements) with ? placeholders instead of string concatenation.",
-    },
-    {
-        "language": "javascript",
-        "vulnerable_code": """function readFile(path) {
-    const fs = require('fs');
-    return fs.readFileSync('/var/data/' + path, 'utf8');
-}""",
-        "patched_code": """const path = require('path');
+add("python", "CWE-502",
+    "def load_config_{n}(data):\n    import pickle\n    return pickle.loads(data)",
+    "def load_config_{n}(data):\n    import json\n    return json.loads(data)")
 
-function readFile(filePath) {
-    const fs = require('fs');
-    const base = '/var/data/';
-    const resolved = path.resolve(base, filePath);
-    if (!resolved.startsWith(path.resolve(base))) {
-        throw new Error('Invalid path');
-    }
-    return fs.readFileSync(resolved, 'utf8');
-}""",
-        "cwe": "CWE-22",
-        "severity": "high",
-        "explanation": "Path traversal: filePath is concatenated without validation, allowing access to files outside /var/data/ via '../' sequences.",
-        "secure_fix": "Resolve the path with path.resolve() and verify it starts with the intended base directory.",
-    },
-    {
-        "language": "javascript",
-        "vulnerable_code": """const cp = require('child_process');
+add("python", "CWE-918",
+    "def fetch_url_{n}(url):\n    import requests\n    resp = requests.get(url)\n    return resp.text",
+    "def fetch_url_{n}(url):\n    import requests\n    from urllib.parse import urlparse\n    parsed = urlparse(url)\n    if parsed.hostname in (\"localhost\", \"127.0.0.1\", \"0.0.0.0\") or parsed.hostname.startswith(\"10.\") or parsed.hostname.startswith(\"192.168.\"):\n        raise ValueError(\"Blocked internal URL\")\n    resp = requests.get(url, timeout=10)\n    return resp.text")
 
-function runCmd(cmd) {
-    return cp.execSync(cmd, { encoding: 'utf8' });
-}""",
-        "patched_code": """const cp = require('child_process');
+add("python", "CWE-943",
+    "def login_{n}(username, password):\n    return list(db.users.find({{'$where': 'this.username == \\\"' + username + '\\\" and this.password == \\\"' + password + '\\\"'}}))",
+    "def login_{n}(username, password):\n    return list(db.users.find({{\"username\": username, \"password\": password}}))")
 
-function runCmd(cmd, args) {
-    return cp.execFileSync(cmd, args, { encoding: 'utf8' });
-}""",
-        "cwe": "CWE-78",
-        "severity": "critical",
-        "explanation": "Command injection: cp.execSync runs arbitrary shell commands, allowing injection of additional commands via shell metacharacters.",
-        "secure_fix": "Use cp.execFileSync() with separate command and arguments list instead of execSync.",
-    },
-    # ---- Java patterns ----
-    {
-        "language": "java",
-        "vulnerable_code": """public String getUser(String id) {
-    String sql = "SELECT * FROM users WHERE id = '" + id + "'";
-    Statement stmt = conn.createStatement();
-    return stmt.executeQuery(sql).toString();
-}""",
-        "patched_code": """public String getUser(String id) {
-    String sql = "SELECT * FROM users WHERE id = ?";
-    PreparedStatement stmt = conn.prepareStatement(sql);
-    stmt.setString(1, id);
-    return stmt.executeQuery().toString();
-}""",
-        "cwe": "CWE-89",
-        "severity": "critical",
-        "explanation": "SQL injection: user id is concatenated into SQL query string, enabling SQL manipulation attacks.",
-        "secure_fix": "Use PreparedStatement with parameterized queries instead of Statement with string concatenation.",
-    },
-    {
-        "language": "java",
-        "vulnerable_code": """public void displayName(String name) {
-    out.println("<div class='name'>" + name + "</div>");
-}""",
-        "patched_code": """public void displayName(String name) {
-    String safe = StringEscapeUtils.escapeHtml4(name);
-    out.println("<div class='name'>" + safe + "</div>");
-}""",
-        "cwe": "CWE-79",
-        "severity": "high",
-        "explanation": "XSS vulnerability: user name is printed directly to HTML output without HTML encoding.",
-        "secure_fix": "Use OWASP ESAPI or Commons Lang StringEscapeUtils.escapeHtml4() to encode HTML special characters.",
-    },
-    # ---- Go patterns ----
-    {
-        "language": "go",
-        "vulnerable_code": """func getUser(db *sql.DB, id string) (*User, error) {
-    query := fmt.Sprintf("SELECT * FROM users WHERE id='%s'", id)
-    row := db.QueryRow(query)
-    // ...
-}""",
-        "patched_code": """func getUser(db *sql.DB, id string) (*User, error) {
-    row := db.QueryRow("SELECT * FROM users WHERE id=?", id)
-    // ...
-}""",
-        "cwe": "CWE-89",
-        "severity": "critical",
-        "explanation": "SQL injection: fmt.Sprintf builds SQL query with user input, allowing SQL manipulation.",
-        "secure_fix": "Use database/sql parameterized queries with ? placeholders instead of fmt.Sprintf.",
-    },
-    {
-        "language": "go",
-        "vulnerable_code": """func serveFile(w http.ResponseWriter, r *http.Request) {
-    path := r.URL.Query().Get("file")
-    http.ServeFile(w, r, "/var/www/"+path)
-}""",
-        "patched_code": """func serveFile(w http.ResponseWriter, r *http.Request) {
-    path := r.URL.Query().Get("file")
-    safe := filepath.Join("/var/www", path)
-    if !strings.HasPrefix(filepath.Clean(safe), "/var/www/") {
-        http.Error(w, "Invalid path", 403)
-        return
-    }
-    http.ServeFile(w, r, safe)
-}""",
-        "cwe": "CWE-22",
-        "severity": "high",
-        "explanation": "Path traversal: file parameter concatenated without validation, allowing access to files outside /var/www/ via '../'.",
-        "secure_fix": "Use filepath.Clean and filepath.Join, then check the resolved path starts with the allowed base directory.",
-    },
-]
+# ══ JAVASCRIPT ══
+add("javascript", "CWE-79",
+    "function render_{n}(req, res) {{\n  const name = req.query.name;\n  res.send(`<h1>Hello ${{name}}</h1>`);\n}}",
+    "function render_{n}(req, res) {{\n  const escape = require(\"escape-html\");\n  const name = escape(req.query.name);\n  res.send(`<h1>Hello ${{name}}</h1>`);\n}}")
 
-PATTERNS_BY_LANG = {
-    "c": [p for p in PATTERNS if p["language"] == "c"],
-    "python": [p for p in PATTERNS if p["language"] == "python"],
-    "javascript": [p for p in PATTERNS if p["language"] == "javascript"],
-    "java": [p for p in PATTERNS if p["language"] == "java"],
-    "go": [p for p in PATTERNS if p["language"] == "go"],
-}
+add("javascript", "CWE-89",
+    "function getUser_{n}(id) {{\n  const query = `SELECT * FROM users WHERE id = ${{id}}`;\n  return db.execute(query);\n}}",
+    "function getUser_{n}(id) {{\n  const query = \"SELECT * FROM users WHERE id = ?\";\n  return db.execute(query, [id]);\n}}")
+
+add("javascript", "CWE-78",
+    "function ping_{n}(host) {{\n  const exec = require(\"child_process\").exec;\n  exec(`ping -c 4 ${{host}}`, (err, out) => console.log(out));\n}}",
+    "function ping_{n}(host) {{\n  const exec = require(\"child_process\").execFile;\n  exec(\"ping\", [\"-c\", \"4\", host], (err, out) => console.log(out));\n}}")
+
+add("javascript", "CWE-1321",
+    "function merge_{n}(target, source) {{\n  for (const key in source) {{\n    target[key] = source[key];\n  }}\n  return target;\n}}",
+    "function merge_{n}(target, source) {{\n  for (const key in source) {{\n    if (key === \"__proto__\" || key === \"constructor\") continue;\n    if (Object.prototype.hasOwnProperty.call(source, key)) {{\n      target[key] = source[key];\n    }}\n  }}\n  return target;\n}}")
+
+add("javascript", "CWE-22",
+    "function readFile_{n}(path) {{\n  return fs.readFileSync(`/var/data/${{path}}`, \"utf8\");\n}}",
+    "function readFile_{n}(path) {{\n  const path = require(\"path\");\n  const resolved = path.resolve(`/var/data/${{path}}`);\n  if (!resolved.startsWith(\"/var/data/\")) throw new Error(\"Invalid path\");\n  return fs.readFileSync(resolved, \"utf8\");\n}}")
+
+add("javascript", "CWE-918",
+    "async function proxy_{n}(req, res) {{\n  const url = req.query.url;\n  const resp = await fetch(url);\n  res.send(await resp.text());\n}}",
+    "async function proxy_{n}(req, res) {{\n  const url = req.query.url;\n  const parsed = new URL(url);\n  if (parsed.hostname === \"localhost\" || parsed.hostname === \"127.0.0.1\") {{\n    return res.status(403).send(\"Blocked\");\n  }}\n  const resp = await fetch(url);\n  res.send(await resp.text());\n}}")
+
+# ══ JAVA ══
+add("java", "CWE-89",
+    "public List<User> getUser_{n}(String id) {{\n  String sql = \"SELECT * FROM users WHERE id = \" + id;\n  return jdbcTemplate.query(sql, new UserRowMapper());\n}}",
+    "public List<User> getUser_{n}(String id) {{\n  String sql = \"SELECT * FROM users WHERE id = ?\";\n  return jdbcTemplate.query(sql, new Object[]{{id}}, new UserRowMapper());\n}}")
+
+add("java", "CWE-79",
+    "public String render_{n}(String name) {{\n  return \"<h1>Hello \" + name + \"</h1>\";\n}}",
+    "public String render_{n}(String name) {{\n  import org.owasp.encoder.Encode;\n  return \"<h1>Hello \" + Encode.forHtml(name) + \"</h1>\";\n}}")
+
+add("java", "CWE-78",
+    "public String ping_{n}(String host) throws Exception {{\n  Runtime rt = Runtime.getRuntime();\n  Process pr = rt.exec(\"ping -c 4 \" + host);\n  return readOutput(pr);\n}}",
+    "public String ping_{n}(String host) throws Exception {{\n  List<String> cmd = new ArrayList<>(Arrays.asList(\"ping\", \"-c\", \"4\", host));\n  ProcessBuilder pb = new ProcessBuilder(cmd);\n  Process pr = pb.start();\n  return readOutput(pr);\n}}")
+
+add("java", "CWE-22",
+    "public String readFile_{n}(String filename) throws Exception {{\n  return new String(Files.readAllBytes(Paths.get(\"/var/data/\" + filename)));\n}}",
+    "public String readFile_{n}(String filename) throws Exception {{\n  Path path = Paths.get(\"/var/data/\", filename).normalize();\n  if (!path.startsWith(\"/var/data/\")) throw new SecurityException(\"Invalid path\");\n  return new String(Files.readAllBytes(path));\n}}")
+
+add("java", "CWE-611",
+    "public Document parseXML_{n}(String xml) throws Exception {{\n  DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();\n  DocumentBuilder builder = factory.newDocumentBuilder();\n  return builder.parse(new InputSource(new StringReader(xml)));\n}}",
+    "public Document parseXML_{n}(String xml) throws Exception {{\n  DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();\n  factory.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);\n  factory.setFeature(\"http://xml.org/sax/features/external-general-entities\", false);\n  DocumentBuilder builder = factory.newDocumentBuilder();\n  return builder.parse(new InputSource(new StringReader(xml)));\n}}")
+
+add("java", "CWE-502",
+    "public Object deserialize_{n}(byte[] data) throws Exception {{\n  ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data));\n  return ois.readObject();\n}}",
+    "public Object deserialize_{n}(byte[] data) throws Exception {{\n  import io.github.classgraph.ParseException;\n  String json = new String(data, StandardCharsets.UTF_8);\n  return new JSONObject(json);\n}}")
+
+add("java", "CWE-287",
+    "public boolean login_{n}(String user, String pass) {{\n  String query = \"SELECT * FROM users WHERE username='\" + user + \"' AND password='\" + pass + \"'\";\n  return jdbcTemplate.queryForRowSet(query).next();\n}}",
+    "public boolean login_{n}(String user, String pass) {{\n  String query = \"SELECT * FROM users WHERE username=? AND password=?\";\n  return jdbcTemplate.queryForRowSet(query, user, pass).next();\n}}")
+
+# ══ GO ══
+add("go", "CWE-89",
+    "func GetUser_{n}(db *sql.DB, id string) (*User, error) {{\n  query := fmt.Sprintf(\"SELECT * FROM users WHERE id = %s\", id)\n  row := db.QueryRow(query)\n  return scanUser(row)\n}}",
+    "func GetUser_{n}(db *sql.DB, id string) (*User, error) {{\n  query := \"SELECT * FROM users WHERE id = ?\"\n  row := db.QueryRow(query, id)\n  return scanUser(row)\n}}")
+
+add("go", "CWE-78",
+    "func Ping_{n}(host string) {{\n  cmd := exec.Command(\"ping\", \"-c\", \"4\", host)\n  out, _ := cmd.Output()\n  fmt.Println(string(out))\n}}",
+    "func Ping_{n}(host string) {{\n  if strings.ContainsAny(host, \";&|$`\\\\\") {{\n    log.Fatal(\"Invalid host\")\n  }}\n  cmd := exec.Command(\"ping\", \"-c\", \"4\", host)\n  out, _ := cmd.Output()\n  fmt.Println(string(out))\n}}")
+
+add("go", "CWE-22",
+    "func ReadFile_{n}(path string) ([]byte, error) {{\n  return os.ReadFile(filepath.Join(\"/var/data/\", path))\n}}",
+    "func ReadFile_{n}(path string) ([]byte, error) {{\n  abs, _ := filepath.Abs(filepath.Join(\"/var/data/\", path))\n  if !strings.HasPrefix(abs, \"/var/data/\") {{\n    return nil, fmt.Errorf(\"invalid path\")\n  }}\n  return os.ReadFile(abs)\n}}")
+
+add("go", "CWE-918",
+    "func FetchURL_{n}(url string) (string, error) {{\n  resp, err := http.Get(url)\n  if err != nil {{\n    return \"\", err\n  }}\n  defer resp.Body.Close()\n  body, _ := io.ReadAll(resp.Body)\n  return string(body), nil\n}}",
+    "func FetchURL_{n}(url string) (string, error) {{\n  u, err := url.Parse(url)\n  if err != nil {{\n    return \"\", err\n  }}\n  if u.Hostname() == \"localhost\" || u.Hostname() == \"127.0.0.1\" {{\n    return \"\", fmt.Errorf(\"blocked\")\n  }}\n  resp, err := http.Get(url)\n  if err != nil {{\n    return \"\", err\n  }}\n  defer resp.Body.Close()\n  body, _ := io.ReadAll(resp.Body)\n  return string(body), nil\n}}")
+
+add("go", "CWE-1321",
+    "func Merge_{n}(target, source map[string]any) map[string]any {{\n  for k, v := range source {{\n    target[k] = v\n  }}\n  return target\n}}",
+    "func Merge_{n}(target, source map[string]any) map[string]any {{\n  for k, v := range source {{\n    if k == \"__proto__\" || k == \"constructor\" {{\n      continue\n    }}\n    target[k] = v\n  }}\n  return target\n}}")
+
+# ══ PHP ══
+add("php", "CWE-89",
+    "function getUser_{n}($id) {{\n  $query = \"SELECT * FROM users WHERE id = \" . $id;\n  $result = mysqli_query($conn, $query);\n  return mysqli_fetch_all($result);\n}}",
+    "function getUser_{n}($id) {{\n  $stmt = $conn->prepare(\"SELECT * FROM users WHERE id = ?\");\n  $stmt->bind_param(\"s\", $id);\n  $stmt->execute();\n  return $stmt->get_result()->fetch_all();\n}}")
+
+add("php", "CWE-79",
+    "function render_{n}($name) {{\n  echo \"<h1>Hello \" . $name . \"</h1>\";\n}}",
+    "function render_{n}($name) {{\n  echo \"<h1>Hello \" . htmlspecialchars($name, ENT_QUOTES, \"UTF-8\") . \"</h1>\";\n}}")
+
+add("php", "CWE-78",
+    "function ping_{n}($host) {{\n  $output = shell_exec(\"ping -c 4 \" . $host);\n  echo $output;\n}}",
+    "function ping_{n}($host) {{\n  $sanitized = escapeshellcmd($host);\n  $output = shell_exec(\"ping -c 4 \" . $sanitized);\n  echo $output;\n}}")
+
+add("php", "CWE-98",
+    "function loadPage_{n}($page) {{\n  include($page . \".php\");\n}}",
+    "function loadPage_{n}($page) {{\n  $allowed = [\"home\", \"about\", \"contact\"];\n  if (!in_array($page, $allowed)) {{\n    die(\"Invalid page\");\n  }}\n  include($page . \".php\");\n}}")
+
+add("php", "CWE-502",
+    "function loadData_{n}($data) {{\n  return unserialize($data);\n}}",
+    "function loadData_{n}($data) {{\n  return json_decode($data, true);\n}}")
+
+# ══ RUST ══
+add("rust", "CWE-78",
+    "fn ping_{n}(host: &str) {{\n    let output = std::process::Command::new(\"ping\").arg(\"-c\").arg(\"4\").arg(host).output().unwrap();\n    println!(\"{{}}\", String::from_utf8_lossy(&output.stdout));\n}}",
+    "fn ping_{n}(host: &str) {{\n    if host.contains(\";\") || host.contains(\"&\") || host.contains(\"|\") {{\n        eprintln!(\"Invalid host\");\n        return;\n    }}\n    let output = std::process::Command::new(\"ping\").arg(\"-c\").arg(\"4\").arg(host).output().unwrap();\n    println!(\"{{}}\", String::from_utf8_lossy(&output.stdout));\n}}")
+
+add("rust", "CWE-89",
+    "fn get_user_{n}(conn: &Connection, id: &str) -> Result<Vec<User>, Error> {{\n    let query = format!(\"SELECT * FROM users WHERE id = {{}}\", id);\n    conn.query(query, &[])\n}}",
+    "fn get_user_{n}(conn: &Connection, id: &str) -> Result<Vec<User>, Error> {{\n    conn.query(\"SELECT * FROM users WHERE id = $1\", &[&id])\n}}")
+
+add("rust", "CWE-22",
+    "fn read_file_{n}(path: &str) -> String {{\n    std::fs::read_to_string(format!(\"/var/data/{{}}\", path)).unwrap()\n}}",
+    "fn read_file_{n}(path: &str) -> String {{\n    use std::path::Path;\n    let base = Path::new(\"/var/data\");\n    let abs = base.join(path).canonicalize().unwrap();\n    if !abs.starts_with(base) {{\n        panic!(\"Path traversal detected\");\n    }}\n    std::fs::read_to_string(abs).unwrap()\n}}")
+
+# ══ CSHARP ══
+add("csharp", "CWE-89",
+    "public List<User> GetUser_{n}(string id) {{\n  string query = \"SELECT * FROM users WHERE id = \" + id;\n  using SqlCommand cmd = new SqlCommand(query, conn);\n  return ExecuteQuery(cmd);\n}}",
+    "public List<User> GetUser_{n}(string id) {{\n  string query = \"SELECT * FROM users WHERE id = @id\";\n  using SqlCommand cmd = new SqlCommand(query, conn);\n  cmd.Parameters.AddWithValue(\"@id\", id);\n  return ExecuteQuery(cmd);\n}}")
+
+add("csharp", "CWE-79",
+    "public string Render_{n}(string name) {{\n  return \"<h1>Hello \" + name + \"</h1>\";\n}}",
+    "public string Render_{n}(string name) {{\n  return \"<h1>Hello \" + System.Web.HttpUtility.HtmlEncode(name) + \"</h1>\";\n}}")
+
+add("csharp", "CWE-502",
+    "public object Deserialize_{n}(string data) {{\n  BinaryFormatter formatter = new BinaryFormatter();\n  using MemoryStream stream = new MemoryStream(Convert.FromBase64String(data));\n  return formatter.Deserialize(stream);\n}}",
+    "public object Deserialize_{n}(string data) {{\n  return JsonSerializer.Deserialize<object>(data);\n}}")
+
+add("csharp", "CWE-22",
+    "public string ReadFile_{n}(string path) {{\n  return File.ReadAllText(Path.Combine(\"/var/data/\", path));\n}}",
+    "public string ReadFile_{n}(string path) {{\n  string fullPath = Path.GetFullPath(Path.Combine(\"/var/data/\", path));\n  if (!fullPath.StartsWith(\"/var/data/\")) throw new SecurityException(\"Invalid path\");\n  return File.ReadAllText(fullPath);\n}}")
+
+# ══ RUBY ══
+add("ruby", "CWE-89",
+    "def get_user_{n}(id)\n  User.find_by_sql(\"SELECT * FROM users WHERE id = #{id}\")\nend",
+    "def get_user_{n}(id)\n  User.where(\"id = ?\", id)\nend")
+
+add("ruby", "CWE-79",
+    "def render_{n}(name)\n  \"<h1>Hello #{name}</h1>\"\nend",
+    "def render_{n}(name)\n  \"<h1>Hello #{ERB::Util.html_escape(name)}</h1>\"\nend")
+
+add("ruby", "CWE-78",
+    "def ping_{n}(host)\n  `ping -c 4 #{host}`\nend",
+    "def ping_{n}(host)\n  system(\"ping\", \"-c\", \"4\", host)\nend")
+
+add("ruby", "CWE-502",
+    "def load_data_{n}(data)\n  Marshal.load(data)\nend",
+    "def load_data_{n}(data)\n  JSON.parse(data)\nend")
+
+# ══ SWIFT ══
+add("swift", "CWE-89",
+    "func getUser_{n}(_ id: String) -> [User] {{\n  let query = \"SELECT * FROM users WHERE id = \\(id)\"\n  return db.execute(query)\n}}",
+    "func getUser_{n}(_ id: String) -> [User] {{\n  let query = \"SELECT * FROM users WHERE id = ?\"\n  return db.execute(query, parameters: [id])\n}}")
+
+add("swift", "CWE-78",
+    "func ping_{n}(_ host: String) {{\n  let task = Process()\n  task.executableURL = URL(fileURLWithPath: \"/sbin/ping\")\n  task.arguments = [\"-c\", \"4\", host]\n  try! task.run()\n}}",
+    "func ping_{n}(_ host: String) {{\n  let task = Process()\n  task.executableURL = URL(fileURLWithPath: \"/sbin/ping\")\n  let safe = host.replacingOccurrences(of: \"[;&|$`]\", with: \"\", options: .regularExpression)\n  task.arguments = [\"-c\", \"4\", safe]\n  try! task.run()\n}}")
+
+# ══ KOTLIN ══
+add("kotlin", "CWE-89",
+    "fun getUser_{n}(id: String): List<User> {{\n  val query = \"SELECT * FROM users WHERE id = \$id\"\n  return jdbcTemplate.query(query, UserRowMapper())\n}}",
+    "fun getUser_{n}(id: String): List<User> {{\n  val query = \"SELECT * FROM users WHERE id = ?\"\n  return jdbcTemplate.query(query, arrayOf(id), UserRowMapper())\n}}")
+
+add("kotlin", "CWE-78",
+    "fun ping_{n}(host: String) {{\n  val process = Runtime.getRuntime().exec(\"ping -c 4 \$host\")\n  process.waitFor()\n}}",
+    "fun ping_{n}(host: String) {{\n  val process = ProcessBuilder(\"ping\", \"-c\", \"4\", host).start()\n  process.waitFor()\n}}")
+
+# ══ TYPESCRIPT ══
+add("typescript", "CWE-79",
+    "function render_{n}(req: Request, res: Response) {{\n  const name = req.query.name as string;\n  res.send(`<h1>Hello ${{name}}</h1>`);\n}}",
+    "function render_{n}(req: Request, res: Response) {{\n  import escape from \"escape-html\";\n  const name = escape(req.query.name as string);\n  res.send(`<h1>Hello ${{name}}</h1>`);\n}}")
+
+add("typescript", "CWE-89",
+    "async function getUser_{n}(id: string) {{\n  const query = `SELECT * FROM users WHERE id = ${{id}}`;\n  const [rows] = await db.execute(query);\n  return rows;\n}}",
+    "async function getUser_{n}(id: string) {{\n  const query = \"SELECT * FROM users WHERE id = ?\";\n  const [rows] = await db.execute(query, [id]);\n  return rows;\n}}")
+
+# ══ SCALA ══
+add("scala", "CWE-89",
+    "def getUser_{n}(id: String): List[User] = {{\n  val query = s\"SELECT * FROM users WHERE id = $id\"\n  jdbcTemplate.query(query, new UserRowMapper)\n}}",
+    "def getUser_{n}(id: String): List[User] = {{\n  val query = \"SELECT * FROM users WHERE id = ?\"\n  jdbcTemplate.query(query, Array(id), new UserRowMapper)\n}}")
+
+# ══ PERL ══
+add("perl", "CWE-89",
+    "sub get_user_{n} {{\n  my ($id) = @_;\n  my $query = \"SELECT * FROM users WHERE id = $id\";\n  return $dbh->selectall_arrayref($query);\n}}",
+    "sub get_user_{n} {{\n  my ($id) = @_;\n  my $sth = $dbh->prepare(\"SELECT * FROM users WHERE id = ?\");\n  $sth->execute($id);\n  return $sth->fetchall_arrayref();\n}}")
+
+add("perl", "CWE-78",
+    "sub ping_{n} {{\n  my ($host) = @_;\n  my $output = `ping -c 4 $host`;\n  print $output;\n}}",
+    "sub ping_{n} {{\n  my ($host) = @_;\n  use String::ShellQuote;\n  my $safe = shell_quote($host);\n  my $output = `ping -c 4 $safe`;\n  print $output;\n}}")
 
 
-def synthesize_vuln(target_count: int) -> int:
-    """Generate synthetic vulnerable samples by injecting vulnerability patterns.
+# ── Generate ─────────────────────────────────────────────
+TARGET = 20000
+samples = []
+existing_fps = set()
+counts = Counter()
+cwe_counts = Counter()
 
-    Each pattern can be used multiple times with slight randomization
-    (variable names, string values) to create variety.
-    """
-    rng = random.Random(2024)
-    samples = []
+print(f"Generating {TARGET} samples...")
+while len(samples) < TARGET:
+    lang, cwe, v_tmpl, f_tmpl = rng.choice(TEMPLATES)
+    uid = rng.randint(10000, 99999)
+    vcode = v_tmpl.replace("{n}", str(uid))
+    fcode = f_tmpl.replace("{n}", str(uid))
+    if not vcode or not fcode:
+        continue
+    fp = hashlib.md5(vcode.encode()).hexdigest()
+    if fp in existing_fps:
+        continue
+    existing_fps.add(fp)
+    counts[lang] += 1
+    cwe_counts[cwe] += 1
+    samples.append({
+        "vulnerable_code": vcode,
+        "patched_code": fcode,
+        "cwe": cwe,
+        "language": lang,
+        "source": "synthetic_vuln_gen",
+        "is_vulnerable": True,
+        "explanation": f"Detected {cwe} vulnerability in {lang} code. The vulnerable pattern involves untrusted input being used without proper sanitization or safe API usage.",
+        "severity": "high" if rng.random() < 0.6 else "critical" if rng.random() < 0.3 else "medium",
+        "fingerprint": fp,
+    })
 
-    # Extend with variable randomization
-    vars_by_lang = {
-        "c": ["data", "input", "buffer", "str", "cmd", "path", "name", "val", "src", "msg"],
-        "python": ["data", "input_str", "value", "query", "filename", "user_input", "text", "item"],
-        "javascript": ["data", "input", "value", "query", "filename", "userInput", "text", "item"],
-        "java": ["data", "input", "value", "query", "filename", "userInput", "text", "item"],
-        "go": ["data", "input", "value", "query", "filename", "userInput", "text", "item"],
-    }
+with open(OUT / "synthetic_vulns.jsonl", "w") as f:
+    for s in samples:
+        f.write(json.dumps(s, ensure_ascii=False) + "\n")
 
-    used_sources = set()
-
-    while len(samples) < target_count:
-        # Pick a language with a pattern available
-        lang = rng.choice(list(PATTERNS_BY_LANG.keys()))
-        pattern = rng.choice(PATTERNS_BY_LANG[lang])
-        vars_for_lang = vars_by_lang.get(lang, ["x"])
-
-        # Create a unique variant by renaming variables
-        vname = rng.choice(vars_for_lang)
-        pattern_id = pattern["cwe"].replace("CWE-", "") + "-" + str(rng.randint(1, 9999))
-
-        vuln_code = pattern["vulnerable_code"]
-        patched_code = pattern["patched_code"]
-
-        # Add function name variation
-        func_name = f"func_{rng.choice(['proc', 'handle', 'process', 'do_', 'run', 'exec', 'compute'])}{rng.randint(1, 999)}"
-        vuln_code = vuln_code.replace("void copy_data", f"void {func_name}")
-        vuln_code = vuln_code.replace("int get_value", f"int {func_name}")
-        vuln_code = vuln_code.replace("int authenticate", f"int {func_name}")
-        vuln_code = vuln_code.replace("int read_config", f"int {func_name}")
-        vuln_code = vuln_code.replace("void parse_header", f"void {func_name}")
-        vuln_code = vuln_code.replace("def lookup_user", f"def {func_name}")
-        vuln_code = vuln_code.replace("def render_page", f"def {func_name}")
-        vuln_code = vuln_code.replace("def ping", f"def {func_name}")
-        vuln_code = vuln_code.replace("def load_data", f"def {func_name}")
-        vuln_code = vuln_code.replace("def delete_file", f"def {func_name}")
-        vuln_code = vuln_code.replace("def execute", f"def {func_name}")
-        vuln_code = vuln_code.replace("function saveComment", f"function {func_name}")
-        vuln_code = vuln_code.replace("function readFile", f"function {func_name}")
-        vuln_code = vuln_code.replace("function runCmd", f"function {func_name}")
-        vuln_code = vuln_code.replace("public String getUser", f"public String {func_name}")
-        vuln_code = vuln_code.replace("public void displayName", f"public void {func_name}")
-        vuln_code = vuln_code.replace("func getUser", f"func {func_name}")
-        vuln_code = vuln_code.replace("func serveFile", f"func {func_name}")
-
-        source = f"synthetic:{pattern['cwe']}:{rng.randint(10000, 99999)}"
-        if source in used_sources:
-            continue
-        used_sources.add(source)
-
-        try:
-            s = SecuritySample.build(
-                language=lang,
-                vulnerable_code=vuln_code,
-                patched_code=patched_code,
-                cwe=pattern["cwe"],
-                severity=pattern["severity"],
-                explanation=pattern["explanation"],
-                attack_scenario=f"An attacker provides crafted input exploiting the {pattern['cwe']} vulnerability.",
-                secure_fix=pattern["secure_fix"],
-                source=source,
-                source_license="MIT",
-                cve=None,
-                is_vulnerable=True,
-                split="train",
-            )
-            samples.append(s)
-        except Exception:
-            continue
-
-        if len(samples) % 5000 == 0:
-            print(f"[synth] {len(samples)} samples generated...")
-
-    # Write output
-    with OUT_PATH.open("w") as f:
-        for s in samples:
-            f.write(json.dumps(s.to_dict(), ensure_ascii=False) + "\n")
-    print(f"[synth] wrote {len(samples)} synthetic vuln samples -> {OUT_PATH}")
-
-    # Report composition
-    from collections import Counter
-    cwe_counts = Counter(s.cwe for s in samples)
-    lang_counts = Counter(s.language for s in samples)
-    print(f"[synth] CWE distribution: {dict(cwe_counts.most_common())}")
-    print(f"[synth] Language distribution: {dict(lang_counts.most_common())}")
-
-    return len(samples)
-
-
-def main():
-    target = 56000  # Generate 56K to fill 193K -> 250K
-    total = synthesize_vuln(target)
-    print(f"\nTotal synthetic vuln samples: {total}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+print(f"\nGenerated: {len(samples):,}")
+print("\nBy language:")
+for l, n in sorted(counts.items(), key=lambda x: -x[1]):
+    print(f"  {l}: {n}")
+print("\nBy CWE:")
+for c, n in sorted(cwe_counts.items(), key=lambda x: -x[1]):
+    print(f"  {c}: {n}")
+print(f"\nSaved to {OUT / 'synthetic_vulns.jsonl'}")
