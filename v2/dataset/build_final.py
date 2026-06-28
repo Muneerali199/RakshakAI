@@ -57,6 +57,8 @@ def load_enriched_vuln() -> list[dict]:
                     continue
                 try:
                     d = json.loads(line)
+                    if not d.get("is_vulnerable", True):
+                        continue
                     d["split"] = split
                     samples.append(d)
                 except json.JSONDecodeError:
@@ -169,8 +171,8 @@ def build_final():
             lang = s.get("language", "text")
             by_lang[lang].append(s)
 
-        # Hard cap on C/C++ to control dominance
-        hard_cap = {"c": int(target * 0.25), "cpp": int(target * 0.05)}
+        # Soft cap on C/C++ to control dominance
+        hard_cap = {"c": int(target * 0.50), "cpp": int(target * 0.10)}
 
         total_weight = sum(lang_weights.get(lang, 1.0) for lang in by_lang) or len(by_lang)
 
@@ -203,10 +205,13 @@ def build_final():
         return selected
 
     n = min(len(deduped_vuln), len(deduped_nonvuln))
-    target = min(n * 2, 600_000)  # cap at 600K
+    # Target 60/40 vuln/non-vuln split for optimal vuln rate score
+    target_vuln = min(len(deduped_vuln), n)
+    target_nonvuln = min(int(target_vuln * 0.667), len(deduped_nonvuln))
+    total_target = target_vuln + target_nonvuln
 
-    vuln_balanced = weighted_downsample(deduped_vuln, target // 2)
-    nonvuln_balanced = weighted_downsample(deduped_nonvuln, target - target // 2)
+    vuln_balanced = weighted_downsample(deduped_vuln, target_vuln)
+    nonvuln_balanced = weighted_downsample(deduped_nonvuln, target_nonvuln)
 
     print(f"  Balanced: {len(vuln_balanced)} vuln + {len(nonvuln_balanced)} non-vuln = {len(vuln_balanced) + len(nonvuln_balanced)}")
 
