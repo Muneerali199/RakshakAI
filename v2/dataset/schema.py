@@ -72,6 +72,8 @@ from typing import Any, Iterable
 LANGUAGES: frozenset[str] = frozenset({
     "python", "javascript", "typescript", "java", "go", "rust",
     "c", "cpp", "ruby", "php", "csharp", "kotlin", "swift", "scala",
+    "shell", "perl", "sql", "html", "xml", "json",
+    "erlang", "haskell", "elixir", "lua", "r",
     "text",
 })
 
@@ -84,7 +86,7 @@ SPLITS: frozenset[str] = frozenset({"train", "val", "test", "benchmark"})
 # Permissive license whitelist. GPL/LGPL/AGPL are explicitly excluded.
 LICENSES: frozenset[str] = frozenset({
     "MIT", "Apache-2.0", "BSD-2", "BSD-3", "ISC", "Unlicense",
-    "CC-BY-4.0", "PublicDomain", "Unknown",
+    "CC-BY-4.0", "CC-BY-NC-SA-4.0", "PublicDomain", "Unknown",
 })
 
 # CWE pattern — MITRE format. We accept CWE-XXX (1-4 digits) and
@@ -97,7 +99,7 @@ OWASP_RE = re.compile(r"^A\d{2}:2021$")
 # Constraints
 MIN_CODE_CHARS = 30
 MAX_CODE_CHARS = 100_000
-MAX_TEXT_CHARS = 1500
+MAX_TEXT_CHARS = 5000
 
 # A non-exhaustive list of "harmful" tokens that should never appear in a
 # training sample. They indicate either corruption, a PII leak, or that the
@@ -241,10 +243,14 @@ class SecuritySample:
             v = getattr(self, fld) or ""
             if len(v) > MAX_TEXT_CHARS:
                 errs.append(f"{fld} too long ({len(v)} chars)")
-        # Corruption / harmful content
+        # Corruption / harmful content (skip email pattern in code fields)
         for pat in HARM_PATTERNS:
-            for fld in ("vulnerable_code", "patched_code", "explanation",
-                        "attack_scenario", "secure_fix"):
+            text_flds = ("vulnerable_code", "patched_code", "explanation",
+                         "attack_scenario", "secure_fix")
+            # Email pattern is too common in source headers — skip for code fields
+            if pat.pattern.startswith(("\\b[A-Za-z0-9._%+-]", "[A-Za-z0-9._%+-]+@")):
+                text_flds = ("explanation", "attack_scenario", "secure_fix")
+            for fld in text_flds:
                 v = getattr(self, fld) or ""
                 if pat.search(v):
                     errs.append(f"harmful content ({pat.pattern[:30]}) in {fld}")

@@ -64,9 +64,26 @@ If the code is secure, set is_vulnerable=false, severity="clean", and all other 
 # 1. Loading
 # ---------------------------------------------------------------------------
 
+CONSOLIDATED_CLEAN = Path("v2/inputs/datasets/consolidated/clean_all.jsonl")
+
 def _load_clean_vuln() -> list[SecuritySample]:
     """Load ALL vulnerable samples from clean/ directory (all lines in each file)."""
     samples = []
+    if CONSOLIDATED_CLEAN.exists():
+        with CONSOLIDATED_CLEAN.open("r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    s = SecuritySample.from_dict(d)
+                    if s.is_vulnerable:
+                        samples.append(s)
+                except Exception:
+                    continue
+        print(f"[load] {len(samples)} vulnerable samples from consolidated ({CONSOLIDATED_CLEAN})")
+        return samples
     paths = sorted(CLEAN_DIR.rglob("*.jsonl"))
     for p in paths:
         try:
@@ -133,24 +150,76 @@ def _estimate_pool(vuln: list[SecuritySample], nonvuln: list[SecuritySample]) ->
     }
 
 
+LANG_WEIGHTS_PATH = Path("v2/configs/language_balance.json")
+
+def _load_lang_weights() -> dict[str, float]:
+    if LANG_WEIGHTS_PATH.exists():
+        cfg = json.loads(LANG_WEIGHTS_PATH.read_text())
+        return cfg.get("language_weights", {})
+    return {}
+
+
+def _weighted_downsample(samples: list[SecuritySample], n_target: int,
+                         lang_weights: dict[str, float],
+                         rng: random.Random) -> list[SecuritySample]:
+    if len(samples) <= n_target:
+        return samples
+    by_lang: dict[str, list[SecuritySample]] = defaultdict(list)
+    for s in samples:
+        by_lang[s.language].append(s)
+    total_weight = sum(lang_weights.get(lang, 1.0) for lang in by_lang)
+    if total_weight <= 0:
+        total_weight = len(by_lang)
+
+    # Allocate slots proportionally by weight
+    allocations: dict[str, int] = {}
+    for lang, group in by_lang.items():
+        raw = int(n_target * lang_weights.get(lang, 1.0) / total_weight)
+        allocations[lang] = min(raw, len(group))
+
+    # Distribute remaining slots (rounding) to highest-weight langs
+    allocated = sum(allocations.values())
+    remaining = n_target - allocated
+    for _ in range(remaining):
+        best_lang = None
+        best_penalty = float('inf')
+        for lang in by_lang:
+            if allocations[lang] < len(by_lang[lang]):
+                ideal = n_target * lang_weights.get(lang, 1.0) / total_weight
+                penalty = (allocations[lang] + 1) / (lang_weights.get(lang, 1.0) or 1)
+                if penalty < best_penalty:
+                    best_penalty = penalty
+                    best_lang = lang
+        if best_lang:
+            allocations[best_lang] += 1
+
+    selected = []
+    for lang, n_take in allocations.items():
+        if n_take > 0:
+            pool = by_lang[lang]
+            selected.extend(rng.sample(pool, min(n_take, len(pool))))
+    return selected
+
+
 def _balance(vuln: list[SecuritySample], nonvuln: list[SecuritySample],
              target: int) -> tuple[list[SecuritySample], dict]:
-    """Balance to target, keeping as close to 50/50 as possible.
+    """Balance to target with language-weighted downsampling.
+
+    Uses v2/configs/language_balance.json to reduce C-heavy skew.
 
     Returns (balanced_samples, stats).
     """
     rng = random.Random(42)
+    lang_weights = _load_lang_weights()
     n_vuln = len(vuln)
     n_clean = len(nonvuln)
 
-    # Max balanced = 2 * min(vuln, nonvuln)
     max_balanced = 2 * min(n_vuln, n_clean)
     target_actual = min(target, max_balanced)
 
     n_vuln_target = target_actual // 2
     n_clean_target = target_actual - n_vuln_target
 
-    # Adjust if we don't have enough of one side
     if n_vuln_target > n_vuln:
         n_vuln_target = n_vuln
         n_clean_target = min(target_actual - n_vuln_target, n_clean)
@@ -158,23 +227,10 @@ def _balance(vuln: list[SecuritySample], nonvuln: list[SecuritySample],
         n_clean_target = n_clean
         n_vuln_target = min(target_actual - n_clean_target, n_vuln)
 
-    # Downsample vuln with CWE stratification if needed
     if len(vuln) > n_vuln_target:
-        by_cwe: dict[str, list[SecuritySample]] = defaultdict(list)
-        for s in vuln:
-            by_cwe[s.cwe or "CWE-UNKNOWN"].append(s)
-        selected = []
-        for cwe, group in sorted(by_cwe.items()):
-            selected.append(rng.choice(group))
-        remaining = n_vuln_target - len(selected)
-        if remaining > 0:
-            pool = [s for s in vuln if s not in selected]
-            selected.extend(rng.sample(pool, min(remaining, len(pool))))
-        vuln = selected
-
-    # Downsample non-vuln if needed
+        vuln = _weighted_downsample(vuln, n_vuln_target, lang_weights, rng)
     if len(nonvuln) > n_clean_target:
-        nonvuln = rng.sample(nonvuln, n_clean_target)
+        nonvuln = _weighted_downsample(nonvuln, n_clean_target, lang_weights, rng)
 
     stats = {
         "target": target,
@@ -421,6 +477,12 @@ def _lock_benchmark(samples: list[dict], out_dir: Path):
 # ---------------------------------------------------------------------------
 
 def main():
+    target = TARGET_TOTAL
+    if "--target" in sys.argv:
+        idx = sys.argv.index("--target")
+        target = int(sys.argv[idx + 1])
+    print(f"[build_phase_b] target={target}")
+
     OUT_META.mkdir(parents=True, exist_ok=True)
 
     # 1. Load data
@@ -437,7 +499,7 @@ def main():
     print(f"[pool] after dedup: vuln={len(vuln)}, nonvuln={len(nonvuln)}")
 
     # 3. Balance
-    balanced, balance_stats = _balance(vuln, nonvuln, TARGET_TOTAL)
+    balanced, balance_stats = _balance(vuln, nonvuln, target)
     print(f"[balance] final: {len(balanced)} samples ({balance_stats})")
 
     # 4. Report composition
@@ -511,7 +573,7 @@ def main():
 
     # 9. Write summary
     summary = {
-        "target_total": TARGET_TOTAL,
+        "target_total": target,
         "actual_total": len(balanced),
         "vulnerable": sum(1 for s in balanced if s.is_vulnerable),
         "non_vulnerable": sum(1 for s in balanced if not s.is_vulnerable),

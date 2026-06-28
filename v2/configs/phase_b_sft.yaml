@@ -1,93 +1,75 @@
-# RakshakAI v2 — Phase B: Multi-task SFT on 57K balanced samples
-# Builds on Qwen2.5-Coder-7B-Instruct. Does NOT continue from Phase A.
-# Data: 57K balanced (50/50 vuln/clean) with CoT reasoning traces
-# Time: ~3 h on 1× MI300X → ~$6
-#
-# CRITICAL: Use adamw_8bit (NOT paged_adamw_8bit — causes GPU memory fault on ROCm).
-# Inference must use 8-bit (NOT 4-bit NF4 — produces garbage on ROCm/bnb 0.49.2).
-
 base_model: Qwen/Qwen2.5-Coder-7B-Instruct
-model_type: Qwen2ForCausalLM
-tokenizer_type: Qwen2Tokenizer
 
-# --- Output ---
-output_dir: /workspace/RakshakAI/v2/outputs/runs/phase_b
-run_name: rakshakai-v2-phaseB
+# Training dataset (axolotl format with messages column)
+dataset:
+  - path: Muneerali199/RakshakAI-phase-b
+    name: axolotl
+    type: hf
+    split: train
+    chat_template: chatml
 
-# --- Loading ---
-load_in_4bit: true
-bnb_4bit_quant_type: nf4
-bnb_4bit_use_double_quant: true
-bnb_4bit_compute_dtype: bfloat16
+# Evaluation dataset (separate — NOT mixed into training)
+eval_dataset:
+  - path: Muneerali199/RakshakAI-phase-b
+    name: axolotl
+    type: hf
+    split: val
+    chat_template: chatml
 
-# --- LoRA (fresh, not from Phase A) ---
-adapter: lora
+val_set_size: 0
+
+dataset_prepared_path: v2/runs/phase_b_prepared
+
+# LoRA
 lora_r: 32
 lora_alpha: 64
 lora_dropout: 0.05
-lora_target_modules: all-linear
-lora_modules_to_save: ["lm_head", "embed_tokens"]
-lora_use_rslora: true
-lora_bias: none
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
 
-# --- Sequence / batch ---
-sequence_len: 4096
-sample_packing: true
-flash_attention: true
-pad_to_sequence_len: false
-micro_batch_size: 6
-gradient_accumulation_steps: 6
-eval_batch_size: 6
-
-# --- Optimizer (!!! paged_adamw_8bit CRASHES on ROCm !!!) ---
+# Training
 optimizer: adamw_8bit
-lr: 5.0e-5
-lr_scheduler: cosine_with_restarts
+learning_rate: 5e-5
+lr_scheduler: cosine
 warmup_steps: 100
-weight_decay: 0.0
-max_grad_norm: 1.0
-bf16: true
-tf32: false
-gradient_checkpointing: true
-gradient_checkpointing_kwargs:
-  use_reentrant: false
-neftune_noise_alpha: 5
-
-# --- Data ---
-datasets:
-  - path: /workspace/RakshakAI/v2/inputs/datasets/phase_b/pack
-    type: custom_jsonl
-    field: messages
-    roles:
-      user: user
-      assistant: assistant
-      system: system
-
-dataset_prepared_path: /workspace/RakshakAI/v2/inputs/datasets/phase_b/pack_prepared
-
-# --- Eval / save ---
-val_set_size: auto
-eval_steps: 100
-save_steps: 100
-save_total_limit: 5
-save_strategy: steps
-evaluation_strategy: steps
-load_best_model_at_end: true
-metric_for_best_model: eval_loss
-greater_is_better: false
-early_stopping_patience: 10
-early_stopping_threshold: 0.001
-
-# --- Steps (up to 3 epochs; early stopping will cut short if val loss plateaus) ---
 num_epochs: 3
 
-# --- Logging ---
-logging_steps: 10
-report_to: wandb
-wandb_project: rakshakai-v2
-wandb_run_name: phaseB-qwen7b-qlora
+# Eval
+eval_strategy: steps
+eval_steps: 100
+eval_sample_max_num: 200
+metric_for_best_model: eval_loss
+load_best_model_at_end: true
+early_stopping_patience: 10
 
-# --- Misc ---
-seed: 42
+# Batch
+micro_batch_size: 6
+gradient_accumulation_steps: 6
+sequence_len: 4096
+train_on_inputs: false
+
+# Saving
+output_dir: v2/runs/phase_b_sft
+save_strategy: steps
+save_steps: 100
+save_total_limit: 3
+
+# Precision
+bf16: auto
+tf32: true
+
+# Misc
+logging_steps: 10
+report_to: none
+flash_attention: true
+gradient_checkpointing: true
+
+# Special tokens
 special_tokens:
   pad_token: "<|endoftext|>"
