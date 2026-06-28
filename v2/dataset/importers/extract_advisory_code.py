@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Extract real code from GitHub advisory patch URLs."""
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -75,7 +76,7 @@ def process_advisories():
     """Process GitHub advisories and extract real code."""
     
     # GitHub token for authentication (5000 requests/hour vs 60)
-    token = "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"
+    token = os.environ.get("GITHUB_TOKEN", "")
     
     # Check if raw advisories exist
     advisory_file = Path("v2/inputs/datasets/raw/github_advisories.jsonl")
