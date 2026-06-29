@@ -2,3 +2,11 @@
 v2/inputs/datasets/
 rakshak_phase_b.tar.gz
 train_lightweight.py.bak
+.env
+.DS_Store
+*.md
+cg-ml-env/
+/dataset/
+check_extraction.sh
+dedup_log.txt
+demo_vulnerable.*

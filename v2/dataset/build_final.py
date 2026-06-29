@@ -64,9 +64,12 @@ def load_enriched_vuln() -> list[dict]:
                     samples.append(d)
                 except json.JSONDecodeError:
                     continue
-    # Also load from extra_vuln (CrossVul, synthetic, etc.)
+    # Also load from extra_vuln (CrossVul, synthetic, CVEfixes, exploits, trajectories, DPO)
     if EXTRA_VULN_DIR.exists():
         for p in sorted(EXTRA_VULN_DIR.rglob("*.jsonl")):
+            # Skip exploit_bench_exploits (has patched_code == vcode, used only as exploit pairs)
+            if "exploit_bench_exploits" in p.name:
+                continue
             with open(p) as f:
                 for line in f:
                     line = line.strip()
@@ -119,8 +122,8 @@ def compute_quality(d):
         score += 0.2
     if len(expl) > 100:
         score += 0.15
-    cwe = d.get("cwe")
-    if cwe and cwe != "CWE-UNKNOWN" and cwe != "CWE-CLEAN":
+    cwe = d.get("cwe", "")
+    if cwe and cwe not in ("CWE-UNKNOWN", "CWE-CLEAN", "CWE-NVD-CWE-Other", "CWE-NVD-CWE-noinfo"):
         score += 0.1
     if "def " in code or "function " in code or "public " in code:
         score += 0.05
@@ -160,6 +163,15 @@ def build_final():
         seen_fps.add(fp)
         deduped_nonvuln.append(s)
     print(f"  After dedup: {len(deduped_vuln)} vuln, {len(deduped_nonvuln)} non-vuln")
+
+    # Clean CWE edge cases
+    CWE_BAD = {"CWE-NVD-CWE-Other", "CWE-NVD-CWE-noinfo"}
+    for s in deduped_vuln:
+        if s.get("cwe", "") in CWE_BAD:
+            s["cwe"] = "CWE-UNKNOWN"
+    for s in deduped_nonvuln:
+        if s.get("cwe", "") == "CWE-CLEAN":
+            s["cwe"] = "CWE-UNKNOWN"
 
     # 3. Balance with language weights
     print("\n" + "=" * 60)
@@ -222,8 +234,8 @@ def build_final():
         return selected
 
     n = min(len(deduped_vuln), len(deduped_nonvuln))
-    # Target 300K @ 60/40 vuln/non-vuln split
-    target_vuln = min(180_000, len(deduped_vuln))
+    # Target 400K @ 60/40 vuln/non-vuln split
+    target_vuln = min(240_000, len(deduped_vuln))
     target_nonvuln = min(int(target_vuln * 0.667), len(deduped_nonvuln))
     total_target = target_vuln + target_nonvuln
 
