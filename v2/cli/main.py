@@ -628,16 +628,99 @@ class RakshakREPL:
                     show_error(f"Unknown command: {cmd} (type /help for available commands)")
                 continue
 
-            # Regular chat with project context
+            # Regular chat with autonomous tool use (opencode-style)
             self.messages.append({"role": "user", "content": text})
             context = self._build_project_context()
-            system = {"role": "system", "content": get_system(registry.active) + "\n\n" + context}
-            with console.status("[cyan]Thinking...", spinner="dots"):
-                response = chat_sync([system] + self.messages[-20:], registry.get(registry.active))
+            response = self._chat_with_react(text, context)
+
+    def _parse_action(self, response: str) -> Optional[AgentAction]:
+        """Extract ACTION[tool:action](params) from LLM output."""
+        from v2.cli.agent import AgentAction
+        pattern = r'ACTION\[(\w+):(\w+)\]\((.*?)\)'
+        match = re.search(pattern, response, re.DOTALL)
+        if not match:
+            return None
+        tool, action_name, params_str = match.groups()
+        params = {}
+        if params_str.strip():
+            for pair in params_str.split(','):
+                if '=' in pair:
+                    k, v = pair.split('=', 1)
+                    k, v = k.strip(), v.strip().strip('"\'')
+                    if v.isdigit():
+                        v = int(v)
+                    elif v.lower() == 'true':
+                        v = True
+                    elif v.lower() == 'false':
+                        v = False
+                    params[k] = v
+        return AgentAction(tool=tool, action=action_name, params=params, reasoning=response)
+
+    def _chat_with_react(self, text: str, context: str) -> str:
+        """Chat using ReAct pattern — can use tools, shows actions inline like opencode."""
+        from v2.cli.tools import TOOLS as tools_map
+        from v2.cli.agent import ReActAgent
+        from rich.markdown import Markdown
+        from v2.cli.llm import chat_sync
+
+        system = get_system(registry.active) + "\n\n" + context
+        messages = [{"role": "system", "content": system}] + self.messages[-20:]
+
+        # Step 1: Call LLM, check if it wants to use tools
+        t0 = time.time()
+        prompt = messages + [{"role": "user", "content": text}]
+        response = chat_sync(prompt, registry.get(registry.active))
+        action = self._parse_action(response)
+
+        # No tool call — just a normal response
+        if not action:
             content = response.strip()
             if content:
                 console.print(Markdown(content))
+            console.print(f"[dim]Thought: {(time.time()-t0):.1f}s[/]")
             self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        # Tool call: show action inline like opencode
+        tool_label = f"{action.tool}.{action.action}"
+        params_str = ", ".join(f"{k}={v}" for k, v in action.params.items())
+        console.print(f"[bold cyan]→ {tool_label}[/] [dim]({params_str})[/dim]")
+
+        # Execute tool
+        tool_obj = tools_map.get(action.tool)
+        if not tool_obj:
+            console.print(f"[red]Tool '{action.tool}' not available[/]")
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        method = getattr(tool_obj, action.action, None)
+        if not method:
+            console.print(f"[red]Action '{action.action}' not found on {action.tool}[/]")
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        try:
+            result = method(**action.params)
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/]")
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        # Feed result back to LLM for final response
+        result_str = str(result)[:800] if result else "(empty)"
+        result_msg = f"The tool returned:\n```\n{result_str}\n```\nPlease respond conversationally about the result."
+        t1 = time.time()
+        final = chat_sync(prompt + [
+            {"role": "assistant", "content": f"{action.tool}.{action.action} returned: {result_str[:200]}"},
+        ], registry.get(registry.active))
+        t2 = time.time()
+
+        content = final.strip()
+        if content:
+            console.print(Markdown(content))
+        console.print(f"[dim]Thought: {(t2-t0):.1f}s[/]")
+        self.messages.append({"role": "assistant", "content": final})
+        return final
 
     def _exit_gracefully(self):
         """Exit with session summary."""
