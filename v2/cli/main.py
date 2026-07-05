@@ -14,7 +14,10 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 
-from v2.cli.llm import registry, parallel_chat, chat_sync
+from v2.cli.llm import registry, parallel_chat, chat_sync, stream_chat
+from v2.cli.agent import ReActAgent, AgentMode
+from v2.cli.skills import SkillRegistry
+from v2.cli.tools import TOOLS
 from rich.markdown import Markdown
 from rich.table import Table
 from rich import box
@@ -23,7 +26,7 @@ from v2.cli.display import show_vuln_table, show_parallel_results, show_help, sh
 from v2.cli.display import show_scan_tree, show_diff_view, show_code_comparison
 from v2.cli.display import show_model_list, show_history_results, show_session_summary
 from v2.cli.display import MODEL_LABELS, MODEL_COLORS, create_scan_progress, interactive_model_selector
-from v2.cli.prompts import get_explain_messages, get_fix_messages, get_system
+from v2.cli.prompts import get_explain_messages, get_fix_messages, get_system, get_scan_system
 from v2.cli.scanner import BatchScanner, collect_source_files
 from v2.cli.watcher import FileWatcher
 from v2.cli.git_scanner import (
@@ -65,6 +68,7 @@ class ModelCompleter(Completer):
         "/history", "/log", "/stats",
         "/confirm", "/dismiss", "/cost",
         "/clear", "/session", "/exit",
+        "/agent", "/skills",
     ]
 
     def get_completions(self, document, complete_event):
@@ -77,7 +81,7 @@ class ModelCompleter(Completer):
                     yield Completion(cmd, start_position=-len(text))
         
         # Model name completion for /model and /parallel
-        elif text.startswith("/model ") or text.startswith("/parallel "):
+        elif text.startswith("/model ") or text.startswith("/parallel ") or text.startswith("/agent "):
             prefix = text.split()[-1]
             for name in registry.list():
                 if name.startswith(prefix):
@@ -143,6 +147,11 @@ class RakshakREPL:
         self._watcher = FileWatcher(model=registry.active)
         self.last_analysis_id: int | None = None
         
+        # Agent & skills
+        from v2.cli.tools import TOOLS
+        self._skills = SkillRegistry()
+        self._agent = ReActAgent(mode=AgentMode.INTERACTIVE, tools=TOOLS, model=registry.active)
+
         # Track session stats
         self.files_scanned = 0
         self.vulnerabilities_found = 0
@@ -377,6 +386,7 @@ class RakshakREPL:
         
         if registry.set_active(name):
             self.models_used.add(name)
+            self._agent.model = name
             show_success(f"Switched to {MODEL_LABELS.get(name, name)}")
             return True
         else:
@@ -452,6 +462,70 @@ class RakshakREPL:
         )
         return True
 
+    def _handle_agent(self, args: str) -> bool:
+        """Run autonomous agent on a task."""
+        if not args.strip():
+            return show_error("Usage: /agent <task description>")
+        show_status(f"Agent starting: {args.strip()[:80]}...", "cyan")
+        self.models_used.add(self._agent.model)
+        result = self._agent.run(args.strip())
+        self._show_agent_result(result)
+        return True
+
+    def _handle_skills(self, args: str) -> bool:
+        """List or refresh agent skills."""
+        a = args.strip().lower()
+        if a == "refresh":
+            with console.status("[cyan]Refreshing skill cache...", spinner="dots"):
+                self._skills.refresh_cache()
+            show_success("Skills refreshed")
+        elif a:
+            # Show specific skill details
+            skill = self._skills.get_skill(a)
+            if skill:
+                from rich.panel import Panel
+                console.print(Panel(
+                    f"[bold]{skill.name}[/] v{skill.version}\n"
+                    f"Source: {skill.source}\n"
+                    f"Tools: {', '.join(skill.tools_required)}\n\n"
+                    f"{skill.description[:500]}",
+                    title="Skill Details",
+                    border_style="cyan",
+                ))
+            else:
+                show_error(f"Skill '{a}' not found")
+        else:
+            skills = self._skills.list_skills()
+            from rich.table import Table
+            table = Table(title=f"[bold]Skills ({len(skills)})[/]", box=box.ROUNDED, border_style="cyan")
+            table.add_column("Name", style="bold cyan")
+            table.add_column("Source")
+            table.add_column("Tools Required")
+            for name in skills:
+                s = self._skills.get_skill(name)
+                table.add_row(name, s.source, ", ".join(s.tools_required) if s.tools_required else "—")
+            console.print(table if skills else "[dim]No skills loaded. Use /skills refresh to fetch from GitHub.[/]")
+        return True
+
+    def _show_agent_result(self, result: dict):
+        """Display agent execution result."""
+        from rich.panel import Panel
+        from v2.cli.display import console
+        success = result.get("success", False)
+        border = "green" if success else "red"
+        title = "✓ Agent Complete" if success else "✗ Agent Failed"
+        text = f"Steps: {result['steps']}\n"
+        if result.get("error"):
+            text += f"Error: {result['error']}\n"
+        for t in result["thoughts"]:
+            action_str = ""
+            if t.get("action"):
+                a = t["action"]
+                action_str = f" → {a['tool']}.{a['action']}({a['params']})"
+            status = "✓" if t.get("success") else "✗" if t.get("success") is False else "?"
+            text += f"\n  Step {t['step']}: [{status}] {t['thought'][:120]}{action_str}"
+        console.print(Panel(text.strip(), title=title, border_style=border))
+
     # ── main loop ──────────────────────────────────────────
 
     def run(self):
@@ -509,6 +583,8 @@ class RakshakREPL:
                     "/cost": self._handle_cost,
                     "/clear": lambda a: (self.messages.clear(), show_status("Conversation context cleared", "green")),
                     "/session": self._handle_session,
+                    "/agent": self._handle_agent,
+                    "/skills": self._handle_skills,
                     "/exit": lambda a: self._exit_gracefully(),
                 }
 

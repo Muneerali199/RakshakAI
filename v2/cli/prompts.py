@@ -29,97 +29,7 @@ EXPLAIN_COMPACT = """Explain code concisely. Cover: purpose, key functions, secu
 # Fix mode - direct and actionable
 FIX_COMPACT = """Security engineer. Provide: 1) Root cause 2) Secure fix (code) 3) Why it works. Be direct."""
 
-# Model-specific optimizations
-SYSTEM_PROMPTS = {
-    "rakshak": MYTHOS_CORE,
-    "deepseek": MYTHOS_CORE,  # DeepSeek benefits from ultra-compact prompts
-    "llama": MYTHOS_CORE,
-    "gpt-4o": MYTHOS_CORE,
-    "gpt-4o-mini": MYTHOS_CORE,  # Especially important for mini models
-}
-
-def get_system(model_name: str = "deepseek") -> str:
-    """Get ultra-efficient system prompt for any model."""
-    return SYSTEM_PROMPTS.get(model_name, MYTHOS_CORE)
-
-def get_scan_messages(code: str, model_name: str = "deepseek", language: str = "c") -> list[dict]:
-    """Create scan messages - optimized for token efficiency."""
-    # Truncate code if too long (save tokens)
-    max_code_len = 4000
-    if len(code) > max_code_len:
-        code = code[:max_code_len] + "\n... [truncated]"
-    
-    lang = language or "c"
-    return [
-        {"role": "system", "content": get_system(model_name)},
-        {"role": "user", "content": f"Scan {lang}:\n```{lang}\n{code}\n```"},
-    ]
-
-def get_explain_messages(code: str) -> list[dict]:
-    """Explain code - compact prompt."""
-    max_code_len = 3000
-    if len(code) > max_code_len:
-        code = code[:max_code_len] + "\n... [truncated]"
-    
-    return [
-        {"role": "system", "content": EXPLAIN_COMPACT},
-        {"role": "user", "content": f"```c\n{code}\n```"},
-    ]
-
-def get_fix_messages(description: str) -> list[dict]:
-    """Fix vulnerability - direct prompt."""
-    return [
-        {"role": "system", "content": FIX_COMPACT},
-        {"role": "user", "content": description[:500]},  # Limit description length
-    ]
-
-## Rules
-1. NEVER hallucinate vulnerabilities. Only report what you can verify.
-2. Classify every finding with an exact CWE ID from the approved list below.
-3. Rate severity: CRITICAL / HIGH / MEDIUM / LOW / INFO.
-4. Rate confidence: 0.0–1.0 based on how certain you are (1.0 = definite, 0.5 = plausible, 0.0 = uncertain).
-5. Provide the exact line number and a snippet of vulnerable code.
-6. Suggest a concrete fix for each finding.
-7. If the code is safe, say so clearly — "No vulnerabilities found."
-
-## Approved CWE taxonomy (248 classes)
-Your output CWE MUST be one of these, NOT a free-generated label:
-{_CWE_LIST}
-
-## Output format (use markdown)
-```json
-{{
-  "vulnerabilities": [
-    {{
-      "cwe": "CWE-XXX",
-      "name": "Short name",
-      "severity": "HIGH",
-      "confidence": 0.95,
-      "location": "file.c:42",
-      "code": "gets(buf);",
-      "description": "What's wrong and why it matters",
-      "fix": "How to fix it with code example"
-    }}
-  ],
-  "summary": "Overall assessment"
-}}
-```
-
-## Key CWEs to watch for
-- CWE-119: Buffer overflow (gets, strcpy, sprintf without bounds)
-- CWE-787: Out-of-bounds write
-- CWE-125: Out-of-bounds read
-- CWE-476: NULL pointer dereference
-- CWE-190: Integer overflow
-- CWE-78: OS command injection
-- CWE-134: Format string
-- CWE-415: Double free
-- CWE-416: Use after free
-- CWE-362: Race condition
-- CWE-200: Information exposure
-
-Be thorough but honest. Quality over quantity."""
-
+# GPT-specific prompts (for models that handle longer contexts)
 GPT4_SYSTEM = f"""You are RakshakAI, an elite security code auditor. Analyze source code for vulnerabilities.
 
 ## Requirements
@@ -175,32 +85,102 @@ FIX_SYSTEM = """You are a senior security engineer. Given a vulnerability descri
 
 The fix must be correct, secure, and production-ready."""
 
-SYSTEM_PROMPTS = {
-    "rakshak": DEEPSEEK_SYSTEM,
-    "deepseek": DEEPSEEK_SYSTEM,
-    "llama": DEEPSEEK_SYSTEM,
+# General assistant prompt (for non-scan chat)
+ASSISTANT_SYSTEM = """You are RakshakAI, an expert security AI assistant. You help with:
+- Code review and vulnerability detection
+- Secure coding practices
+- Architecture and design reviews
+- Security tool usage and automation
+- General programming help
+
+Be concise, practical, and accurate. When analyzing code, explain the issue and suggest a fix."""
+
+# Model-specific scan prompts (JSON-only output for security scanning)
+SCAN_PROMPTS = {
+    "rakshak": MYTHOS_CORE,
+    "deepseek": MYTHOS_CORE,
+    "llama": MYTHOS_CORE,
     "gpt-4o": GPT4_SYSTEM,
     "gpt-4o-mini": GPT4_MINI_SYSTEM,
 }
 
+# General chat prompts (conversational, not JSON)
+CHAT_PROMPTS = {
+    "rakshak": ASSISTANT_SYSTEM,
+    "deepseek": ASSISTANT_SYSTEM,
+    "llama": ASSISTANT_SYSTEM,
+    "gpt-4o": ASSISTANT_SYSTEM,
+    "gpt-4o-mini": ASSISTANT_SYSTEM,
+}
+
 def get_system(model_name: str = "deepseek") -> str:
-    return SYSTEM_PROMPTS.get(model_name, DEEPSEEK_SYSTEM)
+    """General chat system prompt."""
+    return CHAT_PROMPTS.get(model_name, ASSISTANT_SYSTEM)
+
+def get_scan_system(model_name: str = "deepseek") -> str:
+    """Scan-specific system prompt (JSON-only output)."""
+    return SCAN_PROMPTS.get(model_name, MYTHOS_CORE)
 
 def get_scan_messages(code: str, model_name: str = "deepseek", language: str = "c") -> list[dict]:
+    """Create scan messages - optimized for token efficiency."""
+    max_code_len = 4000
+    if len(code) > max_code_len:
+        code = code[:max_code_len] + "\n... [truncated]"
     lang = language or "c"
     return [
-        {"role": "system", "content": get_system(model_name)},
-        {"role": "user", "content": f"Scan this {lang} code for vulnerabilities:\n\n```{lang}\n{code}\n```"},
+        {"role": "system", "content": get_scan_system(model_name)},
+        {"role": "user", "content": f"Scan {lang}:\n```{lang}\n{code}\n```"},
     ]
 
 def get_explain_messages(code: str) -> list[dict]:
+    """Explain code - compact prompt."""
+    max_code_len = 3000
+    if len(code) > max_code_len:
+        code = code[:max_code_len] + "\n... [truncated]"
     return [
-        {"role": "system", "content": EXPLAIN_SYSTEM},
-        {"role": "user", "content": f"Explain this C code:\n\n```c\n{code}\n```"},
+        {"role": "system", "content": EXPLAIN_COMPACT},
+        {"role": "user", "content": f"```c\n{code}\n```"},
     ]
 
 def get_fix_messages(description: str) -> list[dict]:
+    """Fix vulnerability - direct prompt."""
     return [
-        {"role": "system", "content": FIX_SYSTEM},
-        {"role": "user", "content": f"Fix this vulnerability:\n\n{description}"},
+        {"role": "system", "content": FIX_COMPACT},
+        {"role": "user", "content": description[:500]},
+    ]
+
+# ── ReAct Agent Prompt ─────────────────────────────────────
+
+AGENT_SYSTEM = """You are RakshakAI Agent, an autonomous AI assistant.
+You reason step-by-step and use tools to accomplish tasks.
+
+## Tools Available
+- github: search_repos(q, limit), get_repo(owner, repo), list_issues(owner, repo, state), create_issue(owner, repo, title, body, labels)
+- web_search: search(q, limit)
+- file_ops: read_file(path), write_file(path, content), list_files(directory, pattern), search_in_files(directory, pattern, file_pattern)
+- shell: execute(command, timeout, cwd) — allowed: {ls, cat, grep, find, git, npm, pip, python, node}
+- http: request(method, url, headers, data, timeout)
+
+## How to act
+Use EXACTLY this format when you need to use a tool:
+ACTION[tool_name:action_name](param1=value1, param2=value2)
+
+When the task is complete, say "DONE" followed by your summary.
+
+## Rules
+1. Think step by step. Say what you're doing and why.
+2. Use one ACTION per response.
+3. Wait for the result before deciding the next step.
+4. If a tool fails, try an alternative approach.
+5. Never hallucinate tool results. Only use what the tool returns.
+6. Be efficient — prefer the simplest tool that works."""
+
+def get_agent_messages(task: str, history: str, tools_context: str) -> list[dict]:
+    """Build ReAct agent messages."""
+    context = f"## Previous steps:\n{history}\n\n## Current task:\n{task}"
+    if tools_context:
+        context += f"\n\n## Available skills/context:\n{tools_context}"
+    return [
+        {"role": "system", "content": AGENT_SYSTEM},
+        {"role": "user", "content": context},
     ]
