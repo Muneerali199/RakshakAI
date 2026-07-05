@@ -173,6 +173,36 @@ class RakshakREPL:
     def _cache_key(self, q: str, m: str) -> str:
         return hashlib.md5(f"{m}:{q}".encode()).hexdigest()[:16]
 
+    def _build_project_context(self) -> str:
+        """Build project context string for the LLM."""
+        from v2.cli.scanner import collect_source_files, SCAN_EXTS
+        cwd = self.current_dir
+        parts = [f"## Project Context\nWorking directory: {cwd}"]
+        # Git info
+        try:
+            from v2.cli.git_scanner import get_repo
+            repo = get_repo(cwd)
+            if repo:
+                branch = repo.active_branch.name if not repo.head.is_detached else "detached"
+                parts.append(f"Git branch: {branch}")
+                parts.append(f"Git repo: {repo.remotes.origin.url if repo.remotes else 'local'}")
+        except Exception:
+            pass
+        # File stats
+        try:
+            files = collect_source_files(cwd, max_files=200)
+            if files:
+                exts = {}
+                for f in files:
+                    ext = Path(f).suffix
+                    exts[ext] = exts.get(ext, 0) + 1
+                lang_summary = ", ".join(f"{ext}: {n}" for ext, n in sorted(exts.items(), key=lambda x: -x[1])[:8])
+                parts.append(f"Source files: {len(files)} ({lang_summary})")
+                parts.append("Use /batch to scan all files, /scan <file> for one file")
+        except Exception:
+            pass
+        return "\n".join(parts)
+
     # ── command handlers ──────────────────────────────────
 
     def _handle_scan(self, args: str) -> bool:
@@ -598,10 +628,15 @@ class RakshakREPL:
                     show_error(f"Unknown command: {cmd} (type /help for available commands)")
                 continue
 
-            # Regular chat
+            # Regular chat with project context
             self.messages.append({"role": "user", "content": text})
-            system = {"role": "system", "content": get_system(registry.active)}
-            response = _chat_and_show(registry.active, [system] + self.messages[-20:])
+            context = self._build_project_context()
+            system = {"role": "system", "content": get_system(registry.active) + "\n\n" + context}
+            with console.status("[cyan]Thinking...", spinner="dots"):
+                response = chat_sync([system] + self.messages[-20:], registry.get(registry.active))
+            content = response.strip()
+            if content:
+                console.print(Markdown(content))
             self.messages.append({"role": "assistant", "content": response})
 
     def _exit_gracefully(self):
