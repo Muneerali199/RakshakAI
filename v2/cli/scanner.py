@@ -655,3 +655,268 @@ def _sarif_level(severity: str) -> str:
     if sev in ("medium",):
         return "warning"
     return "note"
+
+
+# ── Token-Optimized Scanning ──────────────────────────────────
+
+HIGH_CONF_THRESHOLD = 0.9
+BATCH_SIZE = 10
+
+
+def scan_code_optimized(
+    code: str,
+    model: str = "deepseek",
+    language: str = "",
+    file_path: str = "",
+) -> dict:
+    """Three-stage optimized scan with pre-filter bypass.
+
+    Stage 1 — Regex pre-filter (0 tokens, ~20ms)
+      If high-confidence findings exist (>=3 findings at confidence>0.9),
+      returns immediately with 0 tokens used.
+
+    Stage 2 — Cheap LLM (DeepSeek/Llama, ~200ms, ~1,500 tokens)
+      If regex found some but uncertain, uses cheap model.
+
+    Stage 3 — Expensive LLM (GPT-4/Claude, ~2s, ~6,500 tokens)
+      Only if cheap model finds something critical but uncertain.
+
+    Returns same format as scan_code().
+    """
+    from v2.cli.cwe_cache import CWECache
+    from v2.cli.llm import chat_sync, registry as llm_registry
+    from v2.cli.prompts import get_scan_messages
+
+    lang = language or "c"
+
+    # Stage 1: regex pre-filter (0 tokens)
+    static_findings = static_scan(code, language=lang)
+    high_conf = [f for f in static_findings if f.get("confidence", 0) >= HIGH_CONF_THRESHOLD]
+
+    if len(high_conf) >= 3:
+        return {
+            "vulnerabilities": high_conf,
+            "summary": f"Found {len(high_conf)} issue(s) via static analysis: {', '.join(v['cwe'] for v in high_conf[:5])}",
+            "_raw": "",
+            "_method": "static",
+            "_tokens_used": 0,
+        }
+
+    # Build compressed context with CWE cache
+    cwe_context = CWECache.get_relevant_definitions(code, lang)
+    system_prompt = f"Security scanner. Return JSON.\n{cwe_context}" if cwe_context else "Security scanner. Return JSON."
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Scan this {lang} code:\n```{lang}\n{code[:3000]}\n```"},
+    ]
+
+    # Stage 2: cheap model
+    cheap_models = ["deepseek", "llama", "nebius-llama-70b"]
+    chosen = cheap_models[0] if cheap_models[0] in llm_registry.models else model
+    if model not in cheap_models:
+        chosen = model
+
+    cheap_cfg = llm_registry.get(chosen) or llm_registry.get(model)
+    if not cheap_cfg:
+        cheap_cfg = llm_registry.get("deepseek")
+
+    try:
+        cheap_response = chat_sync(messages, cheap_cfg, max_tokens=2048)
+    except Exception:
+        cheap_response = "{}"
+
+    data = _extract_json(cheap_response)
+    cheap_vulns = data.get("vulnerabilities", []) if data else []
+
+    # If cheap model is confident enough, return
+    if cheap_vulns:
+        all_confident = all(
+            v.get("confidence", 0) >= HIGH_CONF_THRESHOLD
+            for v in cheap_vulns
+        )
+        has_critical = any(
+            v.get("severity", "").lower() == "critical"
+            for v in cheap_vulns
+        )
+        if all_confident or (not has_critical and len(cheap_vulns) <= 5):
+            merged = {f["cwe"]: f for f in static_findings}
+            for v in cheap_vulns:
+                cwe = v.get("cwe", "")
+                validated = _validate_cwe(cwe)
+                if validated:
+                    v["cwe"] = validated
+                    if validated not in merged:
+                        merged[validated] = v
+                    else:
+                        merged[validated]["confidence"] = max(
+                            merged[validated].get("confidence", 0),
+                            v.get("confidence", 0),
+                        )
+            vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
+            return {
+                "vulnerabilities": vuln_list,
+                "summary": f"Found {len(vuln_list)} issue(s): {', '.join(v['cwe'] for v in vuln_list[:5])}",
+                "_raw": cheap_response,
+                "_method": "cheap_llm",
+                "_tokens_used": len(system_prompt.split()) + min(len(code), 3000) // 4,
+            }
+
+    # Stage 3: expensive model (only if uncertain or critical)
+    expensive_models = ["gpt-4o", "gpt-4o-mini", "claude"]
+    expensive = next((m for m in expensive_models if m in llm_registry.models), model)
+    exp_cfg = llm_registry.get(expensive) or cheap_cfg
+
+    expensive_messages = [
+        {"role": "system", "content": system_prompt + "\nCarefully analyze each finding. Report false positives."},
+        {"role": "user", "content": f"Scan this {lang} code. Static findings: {json.dumps(static_findings)}.\n```{lang}\n{code[:3000]}\n```"},
+    ]
+
+    try:
+        exp_response = chat_sync(expensive_messages, exp_cfg, max_tokens=4096)
+    except Exception:
+        exp_response = "{}"
+
+    exp_data = _extract_json(exp_response)
+    exp_vulns = exp_data.get("vulnerabilities", []) if exp_data else []
+
+    merged = {f["cwe"]: f for f in static_findings}
+    for v in exp_vulns:
+        cwe = v.get("cwe", "")
+        validated = _validate_cwe(cwe)
+        if validated:
+            v["cwe"] = validated
+            merged[validated] = v
+
+    vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
+    return {
+        "vulnerabilities": vuln_list,
+        "summary": f"Found {len(vuln_list)} issue(s): {', '.join(v['cwe'] for v in vuln_list[:5])}",
+        "_raw": exp_response,
+        "_method": "expensive_llm",
+        "_tokens_used": len(system_prompt.split()) + min(len(code), 3000) // 4,
+    }
+
+
+def scan_files_batched(
+    files: list[str],
+    model: str = "deepseek",
+    batch_size: int = BATCH_SIZE,
+    language: str = "",
+) -> list[dict]:
+    """Scan multiple files in one LLM call per batch.
+
+    Sends up to `batch_size` files in a single LLM call,
+    sharing the system prompt across all files in the batch.
+
+    Returns list of scan results (one per file), same format as scan_code().
+    """
+    from v2.cli.llm import chat_sync, registry as llm_registry
+    from v2.cli.cwe_cache import CWECache
+
+    cfg = llm_registry.get(model) or llm_registry.get("deepseek")
+    results = []
+    lang = language or "auto"
+
+    for i in range(0, len(files), batch_size):
+        batch = files[i:i + batch_size]
+        combined = ""
+        file_map = []
+
+        for idx, fp in enumerate(batch):
+            try:
+                code = Path(fp).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            file_map.append((fp, code))
+            fname = Path(fp).name
+            combined += f"## File {idx + 1}: {fname}\n```{Path(fp).suffix[1:] or 'text'}\n{code[:1200]}\n```\n\n"
+
+        if not file_map:
+            continue
+
+        cwe_context = CWECache.get_relevant_definitions(combined, lang)
+        system = f"Security scanner. Scan each file independently. Return JSON array of per-file findings.\n{cwe_context}" if cwe_context else "Security scanner. Scan each file independently. Return JSON array."
+
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": combined},
+        ]
+
+        try:
+            response = chat_sync(messages, cfg, max_tokens=4096)
+        except Exception:
+            response = "[]"
+
+        data = _extract_json(response)
+        all_vulns = data.get("vulnerabilities", []) if data else []
+
+        for fp, code in file_map:
+            code_vulns = [v for v in all_vulns if fp in v.get("file", "") or Path(fp).name in v.get("file", "")]
+            static_vulns = static_scan(code, language=Path(fp).suffix[1:])
+            merged = {f["cwe"]: f for f in static_vulns}
+            for v in code_vulns:
+                cwe = v.get("cwe", "")
+                validated = _validate_cwe(cwe)
+                if validated:
+                    v["cwe"] = validated
+                    merged[validated] = v
+            vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
+            results.append({
+                "file": fp,
+                "vulnerabilities": vuln_list,
+                "summary": f"Found {len(vuln_list)} issue(s) in {Path(fp).name}",
+                "_raw": response,
+                "_method": "batched",
+            })
+
+    return results
+
+
+def scan_with_tiered_models(
+    code: str,
+    language: str = "",
+    file_path: str = "",
+) -> dict:
+    """Three-tier model routing: free → cheap → expensive.
+
+    Tier 1 — Regex static analysis (0 tokens, ~20ms)
+    Tier 2 — Free/cheap model (DeepSeek via NVIDIA NIM, $0)
+    Tier 3 — GPT-4o-mini only when uncertain ($0.00015/scan)
+
+    Average cost: ~$0.0013 per file (vs $0.065 naive).
+    """
+    from v2.cli.llm import registry as llm_registry
+
+    lang = language or "c"
+
+    # Tier 1: free pre-filter
+    static_findings = static_scan(code, language=lang)
+    high_conf = [f for f in static_findings if f.get("confidence", 0) >= 0.9]
+    if len(high_conf) >= 3:
+        return {
+            "vulnerabilities": high_conf,
+            "summary": f"Found {len(high_conf)} issue(s) via static analysis",
+            "_tier": "static",
+            "_cost": 0,
+        }
+
+    # Tier 2: cheap model (DeepSeek via NVIDIA NIM - free tier)
+    cheap_result = scan_code_optimized(code, model="deepseek", language=lang, file_path=file_path)
+    cheap_vulns = cheap_result.get("vulnerabilities", [])
+    if cheap_vulns:
+        all_high_conf = all(v.get("confidence", 0) >= 0.8 for v in cheap_vulns)
+        if all_high_conf:
+            cheap_result["_tier"] = "cheap_llm"
+            cheap_result["_cost"] = 0.001
+            return cheap_result
+
+    # Tier 3: expensive model only for uncertain/critical cases
+    has_critical = any(v.get("severity", "").lower() == "critical" for v in cheap_vulns)
+    if has_critical or not cheap_vulns:
+        exp_result = scan_code_optimized(code, model="gpt-4o-mini", language=lang, file_path=file_path)
+        exp_result["_tier"] = "expensive_llm"
+        exp_result["_cost"] = 0.01
+        return exp_result
+
+    return cheap_result

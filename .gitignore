@@ -36,3 +36,4 @@ venv/
 # Logs
 *.log
 /tmp/
+node_modules/

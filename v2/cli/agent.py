@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from v2.cli.llm import registry, chat_sync
-from v2.cli.prompts import get_agent_messages
 
 
 class AgentMode(Enum):
@@ -66,7 +65,18 @@ class ReActAgent:
         step = len(self.thought_chain) + 1
         history = self._format_history()
         tools_context = self._format_tools_context()
-        messages = get_agent_messages(task, history, tools_context)
+        messages = [
+            {"role": "system", "content": f"""You are a security agent that uses tools to accomplish tasks.
+Available tools:
+{tools_context}
+
+Recent history:
+{history}
+
+Respond with ACTION[tool:action](key=value, ...) to use a tool, or DONE when complete.
+Always reason step by step before acting."""},
+            {"role": "user", "content": task},
+        ]
 
         thought_text = chat_sync(messages, registry.get(self.model))
         action = self._parse_action(thought_text)

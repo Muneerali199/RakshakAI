@@ -18,6 +18,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
+            "rakshak=rakshak_cli:main",
             "rakshakai=v2.cli.runner:main",
             "rkscan-ci=v2.cli.ci:main",
             "rkscan-mcp=v2.cli.mcp_server:main",

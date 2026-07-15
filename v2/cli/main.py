@@ -14,25 +14,17 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 
-from v2.cli.llm import registry, parallel_chat, chat_sync, stream_chat
-from v2.cli.agent import ReActAgent, AgentMode
-from v2.cli.skills import SkillRegistry
-from v2.cli.tools import TOOLS
-from rich.markdown import Markdown
-from rich.table import Table
-from rich import box
+from v2.cli.llm import registry, parallel_chat, chat_sync, stream_chat, chat_with_tools
 from v2.cli.display import console, show_banner, show_status, show_error, show_success
+from v2.cli.display import Markdown
 from v2.cli.display import show_vuln_table, show_parallel_results, show_help, show_stats_table
 from v2.cli.display import show_scan_tree, show_diff_view, show_code_comparison
 from v2.cli.display import show_model_list, show_history_results, show_session_summary
 from v2.cli.display import MODEL_LABELS, MODEL_COLORS, create_scan_progress, interactive_model_selector
+from v2.cli.display import show_tool_call, show_tool_result, show_thought_timing, show_tool_error
+from v2.cli.display import show_swarm_results
 from v2.cli.prompts import get_explain_messages, get_fix_messages, get_system, get_scan_system
-from v2.cli.scanner import BatchScanner, collect_source_files
-from v2.cli.watcher import FileWatcher
-from v2.cli.git_scanner import (
-    get_repo, scan_diff_files, get_diff_files,
-    install_precommit_hook, uninstall_precommit_hook, is_hook_installed,
-)
+from v2.cli.auth import auth_state, login_flow, fetch_user_info, AUTH_SERVER_HOST
 import v2.cli.memory as memory
 
 HISTORY_FILE = os.path.expanduser("~/.rakshak_history")
@@ -62,13 +54,16 @@ def _chat_and_show(model: str, messages: list[dict]) -> str:
 class ModelCompleter(Completer):
     COMMANDS = [
         "/help", "/model", "/models", "/parallel",
-        "/scan", "/explain", "/fix",
+        "/scan", "/scan-project", "/explain", "/fix",
         "/batch", "/watch", "/watch-stop",
-        "/diff", "/precommit",
+        "/diff", "/precommit", "/test", "/share",
+        "/index", "/search",  # Codebase indexing
         "/history", "/log", "/stats",
         "/confirm", "/dismiss", "/cost",
         "/clear", "/session", "/exit",
-        "/agent", "/skills",
+        "/agent", "/swarm", "/skills",
+        "/login", "/logout", "/whoami",
+        "/def", "/refs", "/hover", "/rename",  # LSP commands
     ]
 
     def get_completions(self, document, complete_event):
@@ -141,21 +136,54 @@ class RakshakREPL:
         self.messages: list[dict] = []
         self.current_dir = os.getcwd()
         self.session_count = 0
+        if not registry.active:
+            registry.set_active(registry.auto_select())
         self.start_time = time.time()
         self._session_id = memory.start_session(registry.active, self.current_dir)
-        self._scanner = BatchScanner(max_workers=4)
-        self._watcher = FileWatcher(model=registry.active)
         self.last_analysis_id: int | None = None
         
-        # Agent & skills
-        from v2.cli.tools import TOOLS
-        self._skills = SkillRegistry()
-        self._agent = ReActAgent(mode=AgentMode.INTERACTIVE, tools=TOOLS, model=registry.active)
+        # Lazy init heavy modules (faster startup)
+        self._scanner = None
+        self._watcher = None
+        self._skills = None
+        self._agent = None
+        self._code_index = None
+        self._cached_context = ""
+        self._cached_context_model = ""
+        self._cached_context_dir = ""
 
         # Track session stats
         self.files_scanned = 0
         self.vulnerabilities_found = 0
         self.models_used = set([registry.active])
+
+    def _ensure_scanner(self):
+        if self._scanner is None:
+            from v2.cli.scanner import BatchScanner
+            self._scanner = BatchScanner(max_workers=4)
+        return self._scanner
+
+    def _ensure_watcher(self):
+        if self._watcher is None:
+            from v2.cli.watcher import FileWatcher
+            self._watcher = FileWatcher(model=registry.active)
+        return self._watcher
+
+    def _ensure_agent(self):
+        if self._agent is None:
+            from v2.cli.tools import TOOLS
+            from v2.cli.skills import SkillRegistry
+            from v2.cli.agent import ReActAgent, AgentMode
+            self._skills = SkillRegistry()
+            self._agent = ReActAgent(mode=AgentMode.INTERACTIVE, tools=TOOLS, model=registry.active)
+        return self._agent
+    
+    def _ensure_code_index(self):
+        if self._code_index is None:
+            from v2.cli.code_index import CodebaseIndex
+            self._code_index = CodebaseIndex()
+            self._code_index.load()  # Try to load existing index
+        return self._code_index
 
     def _on_watch_notify(self, alert: dict):
         sev = alert.get("severity", "").lower()
@@ -174,10 +202,15 @@ class RakshakREPL:
         return hashlib.md5(f"{m}:{q}".encode()).hexdigest()[:16]
 
     def _build_project_context(self) -> str:
-        """Build project context string for the LLM."""
-        from v2.cli.scanner import collect_source_files, SCAN_EXTS
+        """Build project context string for the LLM — cached until model/dir changes."""
+        if (self._cached_context
+                and self._cached_context_model == registry.active
+                and self._cached_context_dir == self.current_dir):
+            return self._cached_context
+
+        from v2.cli.scanner import collect_source_files
         cwd = self.current_dir
-        parts = [f"## Project Context\nWorking directory: {cwd}"]
+        parts = [f"Working directory: {cwd}"]
         # Git info
         try:
             from v2.cli.git_scanner import get_repo
@@ -201,7 +234,11 @@ class RakshakREPL:
                 parts.append("Use /batch to scan all files, /scan <file> for one file")
         except Exception:
             pass
-        return "\n".join(parts)
+
+        self._cached_context = "\n".join(parts)
+        self._cached_context_model = registry.active
+        self._cached_context_dir = self.current_dir
+        return self._cached_context
 
     # ── command handlers ──────────────────────────────────
 
@@ -260,12 +297,128 @@ class RakshakREPL:
 
     def _handle_fix(self, args: str) -> bool:
         if not args.strip():
-            return show_error("Usage: /fix <description>")
-        show_status("Generating fix...")
-        _chat_and_show(registry.active, get_fix_messages(args.strip()))
+            return show_error("Usage: /fix <description> [--test]")
+        
+        # Check for --test flag
+        run_tests = "--test" in args
+        desc = args.replace("--test", "").strip()
+        
+        show_status(f"Generating fix for: {desc}")
+        _chat_and_show(registry.active, get_fix_messages(desc))
+        
+        # Auto-run tests if requested
+        if run_tests:
+            return self._handle_test("")
+        
+        return True
+    
+    def _handle_test(self, args: str) -> bool:
+        """Auto-detect and run tests."""
+        from v2.cli.test_runner import TestRunner
+        from rich.panel import Panel
+        
+        show_status("Detecting test framework...", "cyan")
+        runner = TestRunner(self.current_dir)
+        framework = runner.detect_framework()
+        
+        if framework.value == "unknown":
+            return show_error("No test framework detected. Supported: pytest, jest, cargo, go test, maven, dotnet")
+        
+        show_status(f"Running {framework.value} tests...", "cyan")
+        
+        # Parse file filter from args
+        file_filter = args.strip() if args.strip() else None
+        
+        result = runner.run_tests(file_filter=file_filter, verbose=False)
+        
+        # Display results
+        status_icon = "✓" if result.passed else "✗"
+        status_color = "green" if result.passed else "red"
+        
+        summary = (
+            f"[{status_color}]{status_icon} {result.tests_run} tests run[/]\n"
+            f"[green]✓ {result.tests_passed} passed[/]\n"
+            f"[red]✗ {result.tests_failed} failed[/]\n"
+            f"[dim]Duration: {result.duration_seconds}s[/]"
+        )
+        
+        console.print(Panel(
+            summary,
+            title=f"[bold]{framework.value} Test Results[/]",
+            border_style=status_color,
+            padding=(1, 2),
+        ))
+        
+        # Show output if tests failed
+        if not result.passed and result.output:
+            from rich.syntax import Syntax
+            console.print("\n[bold red]Test Output:[/]")
+            console.print(result.output[:2000])  # Truncate long output
+            if len(result.output) > 2000:
+                console.print("[dim]... output truncated[/]")
+        
+        return True
+
+    def _handle_scan_project(self, args: str) -> bool:
+        """Scan entire project and chat about results."""
+        from v2.cli.scanner import collect_source_files
+        from v2.cli.prompts import get_project_scan_prompt
+
+        target_dir = args.strip() or self.current_dir
+        if not os.path.isdir(target_dir):
+            return show_error(f"Directory not found: {target_dir}")
+
+        with console.status("[cyan]Collecting source files...", spinner="dots"):
+            files = collect_source_files(target_dir)
+
+        if not files:
+            return show_status("No source files found.", "yellow")
+
+        # Scan all files
+        from v2.cli.scanner import BatchScanner
+        scanner = BatchScanner(max_workers=4)
+        results = scanner.scan_files(files, model=registry.active)
+
+        self.files_scanned += len(files)
+        vuln_count = sum(1 for r in results if r.cwe)
+        self.vulnerabilities_found += vuln_count
+
+        smry = scanner.summary()
+        summary_line = (
+            f"Scanned {smry['scanned']} files • "
+            f"{smry['vulnerable']} vulnerable • "
+            f"Critical: {smry['critical']} • "
+            f"High: {smry['high']} • "
+            f"Medium: {smry.get('medium', 0)}"
+        )
+        show_status(summary_line)
+
+        show_scan_tree([r.to_dict() for r in results])
+
+        # Ask AI to analyze results — feed compact vuln details
+        if vuln_count > 0:
+            # Build compact vulnerability summary for AI (token-efficient)
+            vuln_lines = []
+            for r in results[:25]:  # max 25 vulns to keep tokens low
+                if r.cwe:
+                    fname = Path(r.file).name
+                    vuln_lines.append(f"  • {r.cwe} [{r.severity}] — {fname}")
+            vuln_block = "\n".join(vuln_lines)
+            if len(results) > 25:
+                vuln_block += f"\n  ... and {len(results) - 25} more"
+
+            user_msg = (
+                f"Scanned {smry['scanned']} files. Found {vuln_count} vulnerabilities:\n"
+                f"{vuln_block}\n\n"
+                f"Which should I fix first, prioritized by risk?"
+            )
+            self.messages.append({"role": "user", "content": user_msg})
+            response = self._chat_with_react(user_msg, self._build_project_context())
+
         return True
 
     def _handle_batch(self, args: str) -> bool:
+        from v2.cli.scanner import collect_source_files
         target_dir = args.strip() or "."
         if not os.path.isdir(target_dir):
             return show_error(f"Directory not found: {target_dir}")
@@ -290,15 +443,16 @@ class RakshakREPL:
             def on_progress(completed_count):
                 progress.update(task, completed=completed_count, status=f"{completed_count}/{len(files)} files")
             
-            self._scanner.on_progress(on_progress)
-            results = self._scanner.scan_files(files, model=registry.active)
+            scanner = self._ensure_scanner()
+            scanner.on_progress(on_progress)
+            results = scanner.scan_files(files, model=registry.active)
         
         # Update stats
         self.files_scanned += len(files)
         vuln_count = sum(1 for r in results if r.cwe)
         self.vulnerabilities_found += vuln_count
         
-        smry = self._scanner.summary()
+        smry = scanner.summary()
         show_status(
             f"Scanned: {smry['scanned']} • Vulnerable: {smry['vulnerable']} • "
             f"Critical: {smry['critical']} • High: {smry['high']} • Errors: {smry['errors']}"
@@ -308,26 +462,27 @@ class RakshakREPL:
 
     def _handle_watch(self, args: str) -> bool:
         target_dir = args.strip() or "."
-        if self._watcher.is_running:
+        if self._ensure_watcher().is_running:
             return show_status("Watcher already running")
         if not os.path.isdir(target_dir):
             return show_error(f"Directory not found: {target_dir}")
-        self._watcher.on_notify(self._on_watch_notify)
-        if self._watcher.start(os.path.abspath(target_dir)):
+        self._ensure_watcher().on_notify(self._on_watch_notify)
+        if self._ensure_watcher().start(os.path.abspath(target_dir)):
             show_status(f"Watching {os.path.abspath(target_dir)}  |  /watch-stop to stop")
         else:
             show_error("Failed to start watcher")
         return True
 
     def _handle_watch_stop(self, args: str) -> bool:
-        if not self._watcher.is_running:
+        if not self._ensure_watcher().is_running:
             return show_status("No watcher running")
-        c = self._watcher.vulnerable_count
-        self._watcher.stop()
+        c = self._ensure_watcher().vulnerable_count
+        self._ensure_watcher().stop()
         show_status(f"Watcher stopped. {c} vulnerabilities found.")
         return True
 
     def _handle_diff(self, args: str) -> bool:
+        from v2.cli.git_scanner import get_repo, get_diff_files, scan_diff_files
         repo = get_repo(".")
         if not repo:
             return show_error("Not a git repository")
@@ -341,6 +496,7 @@ class RakshakREPL:
         return True
 
     def _handle_precommit(self, args: str) -> bool:
+        from v2.cli.git_scanner import install_precommit_hook, uninstall_precommit_hook, is_hook_installed
         a = args.strip().lower()
         if a == "install":
             show_success("Hook installed") if install_precommit_hook(".") else show_error("Not a git repo")
@@ -416,7 +572,7 @@ class RakshakREPL:
         
         if registry.set_active(name):
             self.models_used.add(name)
-            self._agent.model = name
+            self._ensure_agent().model = name
             show_success(f"Switched to {MODEL_LABELS.get(name, name)}")
             return True
         else:
@@ -459,6 +615,8 @@ class RakshakREPL:
         return True
 
     def _handle_cost(self, args: str) -> bool:
+        from rich.table import Table
+        from rich import box
         stats = memory.get_stats()
         model_usage = stats.get("model_usage", [])
         if not model_usage:
@@ -491,15 +649,231 @@ class RakshakREPL:
             f"  session: {self._session_id}"
         )
         return True
+    
+    def _handle_share(self, args: str) -> bool:
+        """Share current session via URL or export to file."""
+        from v2.cli.session_share import upload_session, save_session_local, export_for_github
+        
+        arg = args.strip().lower()
+        
+        if not arg or arg == "upload":
+            # Upload to share endpoint
+            show_status("Uploading session...", "cyan")
+            url = upload_session(self._session_id)
+            
+            if url:
+                show_success(f"Session shared: {url}")
+                console.print(f"\n[dim]Share this URL with your team to view scan results[/]\n")
+            else:
+                show_error("Upload failed. Trying local save...")
+                # Fallback to local save
+                output_file = f"session_{self._session_id}.json"
+                if save_session_local(self._session_id, output_file):
+                    show_success(f"Session saved locally: {output_file}")
+                else:
+                    show_error("Local save also failed")
+        
+        elif arg == "export" or arg.startswith("export "):
+            # Export as markdown
+            parts = args.split(maxsplit=1)
+            output_file = parts[1] if len(parts) > 1 else f"session_{self._session_id}.md"
+            
+            md = export_for_github(self._session_id)
+            with open(output_file, 'w') as f:
+                f.write(md)
+            
+            show_success(f"Report exported: {output_file}")
+        
+        elif arg == "save" or arg.startswith("save "):
+            # Save as JSON
+            parts = args.split(maxsplit=1)
+            output_file = parts[1] if len(parts) > 1 else f"session_{self._session_id}.json"
+            
+            if save_session_local(self._session_id, output_file):
+                show_success(f"Session saved: {output_file}")
+            else:
+                show_error("Save failed")
+        
+        else:
+            show_error("Usage: /share [upload|export <file>|save <file>]")
+        
+        return True
+    
+    def _handle_index(self, args: str) -> bool:
+        """Index codebase for semantic search."""
+        from v2.cli.code_index import CodebaseIndex
+        
+        arg = args.strip()
+        target_dir = arg if arg else self.current_dir
+        
+        if not os.path.isdir(target_dir):
+            return show_error(f"Directory not found: {target_dir}")
+        
+        show_status("Indexing codebase (this may take a minute)...", "cyan")
+        
+        try:
+            index = CodebaseIndex()
+            index.embed_codebase(target_dir, chunk_size=50)
+            
+            stats = index.stats()
+            show_success(
+                f"Indexed {stats['chunks']} chunks from {stats['files']} files"
+            )
+            
+            # Update cached index
+            self._code_index = index
+        
+        except ImportError as e:
+            show_error(f"Missing dependencies: {e}")
+            console.print("[dim]Install with: pip install sentence-transformers faiss-cpu[/]")
+        except Exception as e:
+            show_error(f"Indexing failed: {e}")
+        
+        return True
+    
+    def _handle_search(self, args: str) -> bool:
+        """Semantic search in indexed codebase."""
+        if not args.strip():
+            return show_error("Usage: /search <query>")
+        
+        index = self._ensure_code_index()
+        
+        if not index.chunks:
+            return show_error("No index found. Run /index first.")
+        
+        query = args.strip()
+        show_status(f"Searching for: {query}", "cyan")
+        
+        results = index.search(query, top_k=10)
+        
+        if not results:
+            show_status("No results found", "yellow")
+            return True
+        
+        # Display results
+        from rich.table import Table
+        from rich import box
+        from rich.panel import Panel
+        from rich.syntax import Syntax
+        
+        table = Table(
+            title=f"[bold]Search Results: '{query}'[/]",
+            box=box.ROUNDED,
+            border_style="cyan",
+        )
+        table.add_column("Score", width=6, justify="right")
+        table.add_column("File", style="cyan")
+        table.add_column("Lines", width=10)
+        table.add_column("Preview", ratio=1)
+        
+        for chunk, score in results[:10]:
+            table.add_row(
+                f"{score:.2f}",
+                os.path.basename(chunk.file_path),
+                f"{chunk.start_line}-{chunk.end_line}",
+                chunk.content[:80].replace("\n", " ") + "...",
+            )
+        
+        console.print(table)
+        
+        # Show top result with syntax highlighting
+        if results:
+            top_chunk, top_score = results[0]
+            syntax = Syntax(
+                top_chunk.content[:500],
+                top_chunk.language,
+                theme="monokai",
+                line_numbers=True,
+            )
+            console.print(Panel(
+                syntax,
+                title=f"[bold]Top Result ({top_score:.2f}): {top_chunk}[/]",
+                border_style="green",
+            ))
+        
+        return True
+
+    def _handle_login(self, args: str) -> bool:
+        """Login via web browser — opens auth server login page."""
+        if auth_state.logged_in:
+            show_status(f"Already logged in as {auth_state.email}. Use /logout first to switch accounts.", "yellow")
+            return True
+
+        show_status(f"Opening browser to {AUTH_SERVER_HOST}/login ...", "cyan")
+        show_status("If browser doesn't open, visit the URL above manually.", "dim")
+
+        token = login_flow()
+        if not token:
+            show_error("Login timed out or was cancelled. Make sure the auth server is running.")
+            show_status(f"Start it with: python3 -m v2.web.server", "yellow")
+            return False
+
+        user_info = fetch_user_info(token)
+        if not user_info:
+            show_error("Could not verify login. Token received but server unreachable.")
+            return False
+
+        auth_state.email = user_info.get("email", "")
+        auth_state.token = token
+        auth_state.logged_in = True
+        auth_state.login_time = time.time()
+        auth_state.plan = user_info.get("plan", "free")
+        auth_state.save()
+
+        from v2.cli.auth import AUTH_SERVER_HOST
+        welcome = user_info.get("name", "") or user_info["email"]
+        show_success(f"Logged in as {welcome} [{auth_state.plan.title()} Plan]")
+        return True
+
+    def _handle_logout(self, args: str) -> bool:
+        """Logout and clear stored credentials."""
+        if not auth_state.logged_in:
+            show_status("Not logged in.", "yellow")
+            return True
+
+        # Invalidate token on server
+        try:
+            import requests as req
+            req.post(f"{AUTH_SERVER_HOST}/api/logout",
+                     headers={"Authorization": f"Bearer {auth_state.token}"},
+                     timeout=5)
+        except Exception:
+            pass  # offline logout is fine
+
+        email = auth_state.email
+        auth_state.clear()
+        show_success(f"Logged out {email}")
+        return True
+
+    def _handle_whoami(self, args: str) -> bool:
+        """Show current login status."""
+        if not auth_state.logged_in:
+            show_status("Not logged in. Use /login to authenticate.", "yellow")
+            return True
+
+        from v2.cli.display import show_auth_status
+        show_auth_status(auth_state)
+        return True
 
     def _handle_agent(self, args: str) -> bool:
         """Run autonomous agent on a task."""
         if not args.strip():
             return show_error("Usage: /agent <task description>")
         show_status(f"Agent starting: {args.strip()[:80]}...", "cyan")
-        self.models_used.add(self._agent.model)
-        result = self._agent.run(args.strip())
+        self.models_used.add(self._ensure_agent().model)
+        result = self._ensure_agent().run(args.strip())
         self._show_agent_result(result)
+        return True
+
+    def _handle_swarm(self, args: str) -> bool:
+        """Run multi-agent swarm: decompose task, spawn subagents in parallel."""
+        if not args.strip():
+            return show_error("Usage: /swarm <task description>")
+        show_status(f"Swarm orchestrating: {args.strip()[:80]}...", "cyan")
+        from v2.cli.orchestrator import OrchestratorAgent
+        orch = OrchestratorAgent(model=registry.active, max_subagents=5)
+        result = orch.run(args.strip())
+        show_swarm_results(result)
         return True
 
     def _handle_skills(self, args: str) -> bool:
@@ -507,10 +881,12 @@ class RakshakREPL:
         a = args.strip().lower()
         if a == "refresh":
             with console.status("[cyan]Refreshing skill cache...", spinner="dots"):
+                self._ensure_agent()
                 self._skills.refresh_cache()
             show_success("Skills refreshed")
         elif a:
             # Show specific skill details
+            self._ensure_agent()
             skill = self._skills.get_skill(a)
             if skill:
                 from rich.panel import Panel
@@ -525,8 +901,10 @@ class RakshakREPL:
             else:
                 show_error(f"Skill '{a}' not found")
         else:
+            self._ensure_agent()
             skills = self._skills.list_skills()
             from rich.table import Table
+            from rich import box
             table = Table(title=f"[bold]Skills ({len(skills)})[/]", box=box.ROUNDED, border_style="cyan")
             table.add_column("Name", style="bold cyan")
             table.add_column("Source")
@@ -535,6 +913,185 @@ class RakshakREPL:
                 s = self._skills.get_skill(name)
                 table.add_row(name, s.source, ", ".join(s.tools_required) if s.tools_required else "—")
             console.print(table if skills else "[dim]No skills loaded. Use /skills refresh to fetch from GitHub.[/]")
+        return True
+
+    def _handle_def(self, args: str) -> bool:
+        """Jump to symbol definition via LSP."""
+        if not args.strip():
+            return show_error("Usage: /def <file:line:col> or just <symbol>")
+        
+        from v2.cli.lsp_client import LSPClient, detect_language
+        from rich.syntax import Syntax
+        from rich.panel import Panel
+        
+        # Parse input: either "file:line:col" or "symbol" (use current context)
+        parts = args.strip().split(":")
+        if len(parts) == 3:
+            file_path, line, col = parts[0], int(parts[1]), int(parts[2])
+        else:
+            # TODO: Track current file context
+            return show_error("Specify file:line:col (e.g., /def src/main.py:45:10)")
+        
+        try:
+            language = detect_language(file_path)
+            with LSPClient(language=language) as lsp:
+                location = lsp.goto_definition(file_path, line, col)
+                if location:
+                    show_success(f"Definition: {location}")
+                    
+                    # Show code snippet around definition
+                    try:
+                        with open(location.file, 'r') as f:
+                            lines = f.readlines()
+                            start = max(0, location.line - 5)
+                            end = min(len(lines), location.line + 5)
+                            snippet = ''.join(lines[start:end])
+                            
+                            syntax = Syntax(
+                                snippet,
+                                detect_language(location.file),
+                                theme="monokai",
+                                line_numbers=True,
+                                start_line=start + 1,
+                                highlight_lines={location.line},
+                            )
+                            
+                            console.print(Panel(
+                                syntax,
+                                title=f"[bold cyan]{os.path.basename(location.file)}:{location.line}[/]",
+                                border_style="cyan",
+                            ))
+                    except Exception:
+                        pass  # Snippet display is optional
+                else:
+                    show_status("No definition found", "yellow")
+        except Exception as e:
+            show_error(f"LSP error: {e}")
+            console.print("[dim]Tip: Install language server: pip install python-lsp-server[/]")
+        
+        return True
+    
+    def _handle_refs(self, args: str) -> bool:
+        """Find all references to a symbol via LSP."""
+        if not args.strip():
+            return show_error("Usage: /refs <file:line:col>")
+        
+        from v2.cli.lsp_client import LSPClient, detect_language
+        
+        parts = args.strip().split(":")
+        if len(parts) != 3:
+            return show_error("Specify file:line:col (e.g., /refs src/main.py:45:10)")
+        
+        file_path, line, col = parts[0], int(parts[1]), int(parts[2])
+        
+        try:
+            language = detect_language(file_path)
+            with LSPClient(language=language) as lsp:
+                references = lsp.find_references(file_path, line, col)
+                if references:
+                    from rich.table import Table
+                    from rich import box
+                    table = Table(title=f"[bold]References ({len(references)})[/]", box=box.SIMPLE)
+                    table.add_column("File", style="cyan")
+                    table.add_column("Line", justify="right")
+                    table.add_column("Column", justify="right")
+                    
+                    for ref in references[:50]:  # Limit display
+                        table.add_row(
+                            os.path.basename(ref.file),
+                            str(ref.line),
+                            str(ref.column),
+                        )
+                    
+                    console.print(table)
+                    if len(references) > 50:
+                        console.print(f"[dim]... and {len(references) - 50} more[/]")
+                else:
+                    show_status("No references found", "yellow")
+        except Exception as e:
+            show_error(f"LSP error: {e}")
+        
+        return True
+    
+    def _handle_hover(self, args: str) -> bool:
+        """Get hover information (type hints, docs) via LSP."""
+        if not args.strip():
+            return show_error("Usage: /hover <file:line:col>")
+        
+        from v2.cli.lsp_client import LSPClient, detect_language
+        
+        parts = args.strip().split(":")
+        if len(parts) != 3:
+            return show_error("Specify file:line:col (e.g., /hover src/main.py:45:10)")
+        
+        file_path, line, col = parts[0], int(parts[1]), int(parts[2])
+        
+        try:
+            language = detect_language(file_path)
+            with LSPClient(language=language) as lsp:
+                info = lsp.hover(file_path, line, col)
+                if info:
+                    from rich.panel import Panel
+                    from rich.markdown import Markdown
+                    console.print(Panel(
+                        Markdown(info) if "```" in info else info,
+                        title="[bold]Hover Info[/]",
+                        border_style="cyan",
+                        padding=(1, 2),
+                    ))
+                else:
+                    show_status("No hover info available", "yellow")
+        except Exception as e:
+            show_error(f"LSP error: {e}")
+        
+        return True
+    
+    def _handle_rename(self, args: str) -> bool:
+        """Rename symbol across all files via LSP."""
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            return show_error("Usage: /rename <file:line:col> <new_name>")
+        
+        location, new_name = parts[0], parts[1]
+        loc_parts = location.split(":")
+        if len(loc_parts) != 3:
+            return show_error("Specify file:line:col new_name")
+        
+        file_path, line, col = loc_parts[0], int(loc_parts[1]), int(loc_parts[2])
+        
+        from v2.cli.lsp_client import LSPClient, detect_language
+        
+        try:
+            language = detect_language(file_path)
+            with LSPClient(language=language) as lsp:
+                edits = lsp.rename(file_path, line, col, new_name)
+                if edits:
+                    # Show preview
+                    from rich.table import Table
+                    from rich import box
+                    table = Table(title=f"[bold]Rename Preview ({len(edits)} edits)[/]", box=box.SIMPLE)
+                    table.add_column("File", style="cyan")
+                    table.add_column("Line", justify="right")
+                    table.add_column("New Text", style="green")
+                    
+                    for edit in edits[:20]:
+                        table.add_row(
+                            os.path.basename(edit.file),
+                            str(edit.start_line),
+                            edit.new_text[:50],
+                        )
+                    
+                    console.print(table)
+                    if len(edits) > 20:
+                        console.print(f"[dim]... and {len(edits) - 20} more[/]")
+                    
+                    # TODO: Prompt user to confirm and apply edits
+                    console.print("\n[yellow]Apply edits? (Not yet implemented - coming soon!)[/]")
+                else:
+                    show_status("No rename edits found", "yellow")
+        except Exception as e:
+            show_error(f"LSP error: {e}")
+        
         return True
 
     def _show_agent_result(self, result: dict):
@@ -559,8 +1116,12 @@ class RakshakREPL:
     # ── main loop ──────────────────────────────────────────
 
     def run(self):
+        auth_state.load()
         show_banner(registry.active)
-        show_status(f"Ready to scan • Type /help for commands", "green")
+        status_parts = ["⚡ RakshakAI ready · /help for commands · /scan-project to scan everything"]
+        if auth_state.logged_in:
+            status_parts.append(f"🔐 {auth_state.email}")
+        show_status(" · ".join(status_parts), "green")
 
         session = PromptSession(
             history=FileHistory(HISTORY_FILE),
@@ -598,6 +1159,7 @@ class RakshakREPL:
                     "/models": self._handle_models,
                     "/parallel": self._handle_parallel,
                     "/scan": self._handle_scan,
+                    "/scan-project": self._handle_scan_project,
                     "/explain": self._handle_explain,
                     "/fix": self._handle_fix,
                     "/batch": self._handle_batch,
@@ -605,6 +1167,10 @@ class RakshakREPL:
                     "/watch-stop": self._handle_watch_stop,
                     "/diff": self._handle_diff,
                     "/precommit": self._handle_precommit,
+                    "/test": self._handle_test,
+                    "/share": self._handle_share,
+                    "/index": self._handle_index,
+                    "/search": self._handle_search,
                     "/history": self._handle_history,
                     "/log": self._handle_log,
                     "/stats": self._handle_stats,
@@ -613,8 +1179,16 @@ class RakshakREPL:
                     "/cost": self._handle_cost,
                     "/clear": lambda a: (self.messages.clear(), show_status("Conversation context cleared", "green")),
                     "/session": self._handle_session,
+                    "/login": self._handle_login,
+                    "/logout": self._handle_logout,
+                    "/whoami": self._handle_whoami,
                     "/agent": self._handle_agent,
+                    "/swarm": self._handle_swarm,
                     "/skills": self._handle_skills,
+                    "/def": self._handle_def,
+                    "/refs": self._handle_refs,
+                    "/hover": self._handle_hover,
+                    "/rename": self._handle_rename,
                     "/exit": lambda a: self._exit_gracefully(),
                 }
 
@@ -633,8 +1207,152 @@ class RakshakREPL:
             context = self._build_project_context()
             response = self._chat_with_react(text, context)
 
-    def _parse_action(self, response: str) -> Optional[AgentAction]:
-        """Extract ACTION[tool:action](params) from LLM output."""
+    def _chat_with_react(self, text: str, context: str) -> str:
+        """Chat using native function calling — token-aware context."""
+        from rich.markdown import Markdown
+        from v2.cli.llm import trim_messages
+
+        system = get_system(registry.active) + "\n\n" + context
+        full = [{"role": "system", "content": system}] + self.messages[-30:]
+        # Trim to fit token budget (leaves room for response)
+        messages = trim_messages(full, max_tokens=5000)
+        user_msg = {"role": "user", "content": text}
+
+        cfg = registry.get(registry.active)
+        supports_fc = registry.supports_function_calling(registry.active)
+
+        if supports_fc:
+            return self._chat_with_functions(messages, user_msg, cfg)
+        else:
+            return self._chat_with_action_text(messages, user_msg, cfg)
+
+    def _chat_with_functions(self, messages: list[dict], user_msg: dict, cfg) -> str:
+        """Chat using OpenAI-compatible function calling — loops until the model responds with text."""
+        from rich.markdown import Markdown
+        import json
+        from v2.cli.tools import build_openai_tools, dispatch_tool_call
+
+        tools = build_openai_tools()
+        full_messages = messages + [user_msg]
+        t_start = time.time()
+        max_rounds = 10
+
+        def _summarize(name: str, result: object) -> str:
+            if result is None:
+                return "No result"
+            if isinstance(result, str):
+                lines = result.split("\n")
+                return lines[0][:80] + ("..." if len(lines) > 1 else "")
+            if isinstance(result, list):
+                return f"[{len(result)} items]"
+            if isinstance(result, dict):
+                if "error" in result:
+                    return f"Error: {result['error'][:80]}"
+                if "success" in result and not result.get("success"):
+                    return f"Error: {result.get('stderr', result.get('error', 'Failed'))[:80]}"
+                if "stdout" in result:
+                    return result["stdout"][:80]
+            return str(result)[:80]
+
+        for _ in range(max_rounds):
+            response = chat_with_tools(full_messages, cfg, tools=tools)
+            tool_calls = response.get("tool_calls")
+
+            if not tool_calls:
+                final_content = response.get("content", "").strip()
+                if final_content:
+                    console.print(Markdown(final_content))
+                show_thought_timing(t_start, time.time())
+                self.messages.append({"role": "assistant", "content": final_content})
+                return final_content
+
+            asst_content = response.get("content", "")
+            full_messages.append({
+                "role": "assistant",
+                "content": asst_content or None,
+                "tool_calls": tool_calls,
+            })
+
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    args = {}
+
+                show_tool_call(name, args)
+
+                result = dispatch_tool_call(name, args)
+
+                result_str = _summarize(name, result)
+                show_tool_result(result_str)
+
+                raw_str = json.dumps(result) if not isinstance(result, str) else result
+                full_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": raw_str[:3000] if raw_str else "(empty)",
+                })
+
+        show_error("Tool use exceeded maximum rounds (10)")
+        show_thought_timing(t_start, time.time())
+        return ""
+
+    def _chat_with_action_text(self, messages: list[dict], user_msg: dict, cfg) -> str:
+        """Fallback: parse ACTION[...] from text for models without function calling."""
+        from v2.cli.agent import AgentAction
+
+        full_messages = messages + [user_msg]
+        t0 = time.time()
+        response = chat_sync(full_messages, cfg)
+        action = self._parse_action_text(response)
+
+        if not action:
+            content = response.strip()
+            if content:
+                console.print(Markdown(content))
+            show_thought_timing(t0, time.time())
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        # Show action
+        show_tool_call(f"{action.tool}.{action.action}", action.params)
+
+        tool_obj = TOOLS.get(action.tool)
+        if not tool_obj:
+            show_tool_error(f"{action.tool}.{action.action}", f"Tool '{action.tool}' not available")
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        method = getattr(tool_obj, action.action, None)
+        if not method:
+            show_tool_error(f"{action.tool}.{action.action}", f"Action not found")
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        try:
+            result = method(**action.params)
+        except Exception as e:
+            show_tool_error(f"{action.tool}.{action.action}", str(e))
+            self.messages.append({"role": "assistant", "content": response})
+            return response
+
+        # Feed back to LLM
+        result_str = str(result)[:800] if result else "(empty)"
+        final = chat_sync(full_messages + [
+            {"role": "assistant", "content": response},
+            {"role": "user", "content": f"The tool returned: {result_str[:500]}"},
+        ], cfg)
+
+        content = final.strip()
+        if content:
+            console.print(Markdown(content))
+        show_thought_timing(t0, time.time())
+        self.messages.append({"role": "assistant", "content": final})
+        return final
+
+    def _parse_action_text(self, response: str) -> Optional[AgentAction]:
+        """Extract ACTION[tool:action](params) from LLM output (fallback)."""
         from v2.cli.agent import AgentAction
         pattern = r'ACTION\[(\w+):(\w+)\]\((.*?)\)'
         match = re.search(pattern, response, re.DOTALL)
@@ -656,72 +1374,6 @@ class RakshakREPL:
                     params[k] = v
         return AgentAction(tool=tool, action=action_name, params=params, reasoning=response)
 
-    def _chat_with_react(self, text: str, context: str) -> str:
-        """Chat using ReAct pattern — can use tools, shows actions inline like opencode."""
-        from v2.cli.tools import TOOLS as tools_map
-        from v2.cli.agent import ReActAgent
-        from rich.markdown import Markdown
-        from v2.cli.llm import chat_sync
-
-        system = get_system(registry.active) + "\n\n" + context
-        messages = [{"role": "system", "content": system}] + self.messages[-20:]
-
-        # Step 1: Call LLM, check if it wants to use tools
-        t0 = time.time()
-        prompt = messages + [{"role": "user", "content": text}]
-        response = chat_sync(prompt, registry.get(registry.active))
-        action = self._parse_action(response)
-
-        # No tool call — just a normal response
-        if not action:
-            content = response.strip()
-            if content:
-                console.print(Markdown(content))
-            console.print(f"[dim]Thought: {(time.time()-t0):.1f}s[/]")
-            self.messages.append({"role": "assistant", "content": response})
-            return response
-
-        # Tool call: show action inline like opencode
-        tool_label = f"{action.tool}.{action.action}"
-        params_str = ", ".join(f"{k}={v}" for k, v in action.params.items())
-        console.print(f"[bold cyan]→ {tool_label}[/] [dim]({params_str})[/dim]")
-
-        # Execute tool
-        tool_obj = tools_map.get(action.tool)
-        if not tool_obj:
-            console.print(f"[red]Tool '{action.tool}' not available[/]")
-            self.messages.append({"role": "assistant", "content": response})
-            return response
-
-        method = getattr(tool_obj, action.action, None)
-        if not method:
-            console.print(f"[red]Action '{action.action}' not found on {action.tool}[/]")
-            self.messages.append({"role": "assistant", "content": response})
-            return response
-
-        try:
-            result = method(**action.params)
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/]")
-            self.messages.append({"role": "assistant", "content": response})
-            return response
-
-        # Feed result back to LLM for final response
-        result_str = str(result)[:800] if result else "(empty)"
-        result_msg = f"The tool returned:\n```\n{result_str}\n```\nPlease respond conversationally about the result."
-        t1 = time.time()
-        final = chat_sync(prompt + [
-            {"role": "assistant", "content": f"{action.tool}.{action.action} returned: {result_str[:200]}"},
-        ], registry.get(registry.active))
-        t2 = time.time()
-
-        content = final.strip()
-        if content:
-            console.print(Markdown(content))
-        console.print(f"[dim]Thought: {(t2-t0):.1f}s[/]")
-        self.messages.append({"role": "assistant", "content": final})
-        return final
-
     def _exit_gracefully(self):
         """Exit with session summary."""
         duration = time.time() - self.start_time
@@ -735,24 +1387,170 @@ class RakshakREPL:
 
 
 def main():
-    repl = RakshakREPL()
+    # Headless JSON mode for CI/CD
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('command', nargs='?', help='Command to run')
+    parser.add_argument('target', nargs='?', help='File or directory to scan')
+    parser.add_argument('--json', action='store_true', help='Output JSON (headless mode)')
+    parser.add_argument('--model', default=None, help='Model to use')
+    parser.add_argument('--no-interactive', action='store_true', help='Suppress all prompts')
+    parser.add_argument('--fail-on', default='critical,high', help='Fail on severity levels (comma-separated)')
+    parser.add_argument('--auto-commit', action='store_true', help='Auto-commit fixes to git')
+    parser.add_argument('--models', action='store_true', help='List available models and exit')
+    
+    # Parse known args (ignore unknown for REPL mode)
+    args, unknown = parser.parse_known_args()
+    
+    # List models and exit
+    if args.models:
+        from v2.cli.display import show_model_list
+        show_model_list(registry.models, registry.active)
+        return
+    
+    # Headless JSON mode
+    if args.json or args.no_interactive:
+        if not args.command or not args.target:
+            output = {"error": "Usage: rakshakai scan <target> --json"}
+            print(json.dumps(output, indent=2))
+            sys.exit(2)
+        
+        if args.command == 'scan':
+            from v2.cli.scanner import scan_code, collect_source_files, BatchScanner
+            
+            try:
+                if os.path.isfile(args.target):
+                    code = Path(args.target).read_text(encoding='utf-8', errors='replace')
+                    result = scan_code(code, language=Path(args.target).suffix[1:], model=registry.active)
+                    
+                    if args.json:
+                        print(json.dumps(result, indent=2))
+                    
+                    # Exit code: 0=clean, 1=vulns found, 2=error
+                    fail_on = [s.strip().lower() for s in args.fail_on.split(',')]
+                    vulns = result.get("vulnerabilities", [])
+                    has_critical = any(v.get("severity", "").lower() in fail_on for v in vulns)
+                    sys.exit(1 if has_critical else 0)
+                
+                elif os.path.isdir(args.target):
+                    files = collect_source_files(args.target)
+                    if not files:
+                        output = {"error": "No source files found", "scanned": 0}
+                        print(json.dumps(output, indent=2))
+                        sys.exit(0)
+                    
+                    scanner = BatchScanner(max_workers=4)
+                    results = scanner.scan_files(files, model=registry.active)
+                    
+                    output = {
+                        "scanned": len(files),
+                        "vulnerable": sum(1 for r in results if r.cwe),
+                        "results": [r.to_dict() for r in results],
+                        "summary": scanner.summary(),
+                        "model": registry.active,
+                    }
+                    
+                    if args.json:
+                        print(json.dumps(output, indent=2))
+                    
+                    # Exit code
+                    fail_on = [s.strip().lower() for s in args.fail_on.split(',')]
+                    has_critical = any(r.severity and r.severity.lower() in fail_on for r in results)
+                    sys.exit(1 if has_critical else 0)
+                
+                else:
+                    output = {"error": f"Path not found: {args.target}"}
+                    print(json.dumps(output, indent=2))
+                    sys.exit(2)
+            
+            except Exception as e:
+                output = {
+                    "error": str(e),
+                    "type": type(e).__name__,
+                    "help": "Check API keys if using external models, or use --model rakshak"
+                }
+                print(json.dumps(output, indent=2))
+                sys.exit(2)
+        
+        else:
+            output = {"error": f"Unknown command: {args.command}"}
+            print(json.dumps(output, indent=2))
+            sys.exit(2)
+        
+        return
+    
+    # Non-interactive mode: run a scan and exit (legacy)
+    if len(sys.argv) > 1 and not sys.stdin.isatty():
+        from rakshak_cli import local_scan_file, print_table
+        target = sys.argv[1]
+        if os.path.isfile(target):
+            issues = local_scan_file(target)
+            if issues:
+                print(f"\n  \033[1m📄 {target}\033[0m")
+                print_table(issues)
+            else:
+                print(f"\n  ✅ \033[92mNo vulnerabilities found in {target}\033[0m")
+        elif os.path.isdir(target):
+            from rakshak_cli import scan_directory, load_config
+            cfg = load_config()
+            results = scan_directory(target, cfg)
+            for fpath, issues in results.items():
+                if issues:
+                    print(f"\n  \033[1m📄 {fpath}\033[0m")
+                    print_table(issues)
+        else:
+            print(f"\033[91m✖ Path not found: {target}\033[0m")
+            sys.exit(1)
+        return
+
+    # Set model if specified (both interactive and headless)
+    if args.model and args.model in registry.models:
+        registry.set_active(args.model)
+
+    # Interactive REPL mode (requires TTY)
+    if not sys.stdin.isatty():
+        # Show help in non-TTY mode
+        print("RakshakAI v3 — Multi-Model Security CLI")
+        print("Usage: python3 v2/cli/main.py <file-or-dir>")
+        print("       python3 v2/cli/main.py            # interactive REPL (requires terminal)")
+        print("\nCommands when scanning a file:")
+        print("  python3 v2/cli/main.py app.py          Scan a single file")
+        print("  python3 v2/cli/main.py src/            Scan a directory")
+        return
+
+    # Check API key early
+    has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
+
     try:
-        repl.run()
-    except KeyboardInterrupt:
-        duration = time.time() - repl.start_time
-        show_session_summary(
-            duration_seconds=duration,
-            files_scanned=repl.files_scanned,
-            vulnerabilities_found=repl.vulnerabilities_found,
-            models_used=sorted(list(repl.models_used)),
-        )
+        repl = RakshakREPL()
+        try:
+            if not has_key:
+                from v2.cli.display import console as c
+                c.print("  [yellow]⚠ No API key set. Set one to use AI chat:[/yellow]")
+                c.print("  [dim]  export OPENROUTER_API_KEY=\"sk-or-v1-...\"[/dim]")
+                c.print("  [dim]  or create ~/.rakshak/.env with: OPENROUTER_API_KEY=...[/dim]")
+                c.print("  [green]  Scan still works: /scan <file> or type naturally[/green]\n")
+            repl.run()
+        except KeyboardInterrupt:
+            duration = time.time() - repl.start_time
+            show_session_summary(
+                duration_seconds=duration,
+                files_scanned=repl.files_scanned,
+                vulnerabilities_found=repl.vulnerabilities_found,
+                models_used=sorted(list(repl.models_used)),
+            )
+        finally:
+            if repl._ensure_watcher().is_running:
+                repl._ensure_watcher().stop()
+            memory.end_session(repl._session_id)
     except Exception as e:
-        show_error(f"Fatal error: {e}")
-        raise
-    finally:
-        if repl._watcher.is_running:
-            repl._watcher.stop()
-        memory.end_session(repl._session_id)
+        msg = str(e)
+        if "api_key" in msg.lower() or "API key" in msg or "credentials" in msg.lower():
+            show_error("No valid API key found. Set OPENROUTER_API_KEY or OPENAI_API_KEY")
+        else:
+            show_error(f"{msg}")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

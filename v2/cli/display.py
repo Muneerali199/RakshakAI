@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import sys
+import time
 import shutil
 import platform
 from datetime import datetime
@@ -28,35 +29,307 @@ console = Console(highlight=False)
 term_width = shutil.get_terminal_size().columns
 
 MODEL_LABELS = {
+    "ollama": "Ollama Local",
     "rakshak": "Rakshak",
     "deepseek": "DeepSeek V4 Pro",
     "llama": "Llama 3.1 70B",
-    "gpt-4o": "GPT-4o",
+    "mistral-nvidia": "Mistral Large",
+    "nebius-llama-70b": "Llama 3.1 70B",
+    "nebius-llama-8b": "Llama 3.1 8B",
+    "nebius-qwen-72b": "Qwen 2.5 72B",
+    "nebius-qwen-32b": "Qwen 2.5 32B",
+    "nebius-mixtral": "Mixtral 8x22B",
+    "nebius-deepseek": "DeepSeek V2.5",
+    "fw-llama-70b": "Llama 3.1 70B",
+    "fw-llama-8b": "Llama 3.1 8B",
+    "fw-mixtral": "Mixtral 8x22B",
+    "fw-qwen-72b": "Qwen 2.5 72B",
+    "fw-deepseek-v3": "DeepSeek V3",
+    "fw-phi-4": "Phi-4 14B",
+    "tg-llama-70b": "Llama 3.1 70B Turbo",
+    "tg-llama-8b": "Llama 3.1 8B Turbo",
+    "tg-qwen-72b": "Qwen 2.5 72B Turbo",
+    "tg-deepseek": "DeepSeek V3",
+    "tg-mixtral": "Mixtral 8x22B",
+    "groq-llama-70b": "Llama 3.1 70B",
+    "groq-llama-8b": "Llama 3.1 8B",
+    "groq-mixtral": "Mixtral 8x7B",
+    "groq-gemma": "Gemma 2 9B",
+    "groq-deepseek": "DeepSeek R1 Distill",
     "gpt-4o-mini": "GPT-4o Mini",
+    "gpt-4o": "GPT-4o",
+    "claude": "Claude Haiku",
+    "claude-sonnet": "Claude Sonnet",
+    # OpenRouter
+    "or-gpt-4o": "GPT-4o (OR)",
+    "or-gpt-4o-mini": "GPT-4o Mini (OR)",
+    "or-claude-sonnet": "Claude Sonnet (OR)",
+    "or-claude-haiku": "Claude Haiku (OR)",
+    "or-deepseek-v3": "DeepSeek V3 (OR)",
+    "or-llama-70b": "Llama 3.1 70B (OR)",
+    "or-llama-8b": "Llama 3.1 8B (OR)",
+    "or-mixtral": "Mixtral 8x22B (OR)",
+    "or-gemini-2-flash": "Gemini 2.0 Flash (OR)",
+    "or-qwen-72b": "Qwen 2.5 72B (OR)",
+    "or-phi-4": "Phi-4 14B (OR)",
+    "or-llama-3.2-3b": "Llama 3.2 3B (OR)",
+    # Google Gemini
+    "gemini-2-flash": "Gemini 2.0 Flash",
+    "gemini-2-flash-lite": "Gemini 2.0 Flash Lite",
+    "gemini-1.5-pro": "Gemini 1.5 Pro",
+    "gemini-1.5-flash": "Gemini 1.5 Flash",
+    # DeepSeek Native
+    "ds-chat": "DeepSeek V3 Chat",
+    "ds-reasoner": "DeepSeek R1 Reasoner",
+    # Mistral AI
+    "ms-large": "Mistral Large 2",
+    "ms-small": "Mistral Small",
+    "ms-codestral": "Codestral",
+    # xAI Grok
+    "grok-2": "Grok 2",
+    # Perplexity
+    "pplx-sonar": "Sonar Pro",
+    "pplx-sonar-deep": "Sonar Deep",
+    # DeepInfra
+    "di-llama-70b": "Llama 3.1 70B (DI)",
+    "di-llama-8b": "Llama 3.1 8B (DI)",
+    "di-mixtral": "Mixtral 8x22B (DI)",
+    "di-qwen-72b": "Qwen 2.5 72B (DI)",
+    "di-deepseek": "DeepSeek V3 (DI)",
+    # AI/ML API
+    "aiml-gpt-4o": "GPT-4o (AI/ML)",
+    "aiml-gpt-4o-mini": "GPT-4o Mini (AI/ML)",
+    "aiml-claude-sonnet": "Claude Sonnet (AI/ML)",
+    "aiml-llama-70b": "Llama 3.1 70B (AI/ML)",
+    "aiml-deepseek": "DeepSeek V3 (AI/ML)",
 }
 
 MODEL_SHORT_LABELS = {
+    "ollama": "ol",
     "rakshak": "rk",
     "deepseek": "ds",
-    "llama": "llama",
-    "gpt-4o": "gpt4",
+    "llama": "l3-70b",
+    "mistral-nvidia": "mx",
+    "nebius-llama-70b": "nb-l3-70b",
+    "nebius-llama-8b": "nb-l3-8b",
+    "nebius-qwen-72b": "nb-qw-72b",
+    "nebius-qwen-32b": "nb-qw-32b",
+    "nebius-mixtral": "nb-mx",
+    "nebius-deepseek": "nb-ds",
+    "fw-llama-70b": "fw-l3-70b",
+    "fw-llama-8b": "fw-l3-8b",
+    "fw-mixtral": "fw-mx",
+    "fw-qwen-72b": "fw-qw-72b",
+    "fw-deepseek-v3": "fw-ds",
+    "fw-phi-4": "fw-phi",
+    "tg-llama-70b": "tg-l3-70b",
+    "tg-llama-8b": "tg-l3-8b",
+    "tg-qwen-72b": "tg-qw-72b",
+    "tg-deepseek": "tg-ds",
+    "tg-mixtral": "tg-mx",
+    "groq-llama-70b": "gq-l3-70b",
+    "groq-llama-8b": "gq-l3-8b",
+    "groq-mixtral": "gq-mx",
+    "groq-gemma": "gq-gm",
+    "groq-deepseek": "gq-ds",
     "gpt-4o-mini": "gpt4m",
+    "gpt-4o": "gpt4o",
+    "claude": "cl",
+    "claude-sonnet": "cl-sn",
+    # OpenRouter
+    "or-gpt-4o": "or-g4o",
+    "or-gpt-4o-mini": "or-g4m",
+    "or-claude-sonnet": "or-csn",
+    "or-claude-haiku": "or-chk",
+    "or-deepseek-v3": "or-ds",
+    "or-llama-70b": "or-l3-70b",
+    "or-llama-8b": "or-l3-8b",
+    "or-mixtral": "or-mx",
+    "or-gemini-2-flash": "or-gf",
+    "or-qwen-72b": "or-qw72",
+    "or-phi-4": "or-phi",
+    "or-llama-3.2-3b": "or-l3-3b",
+    # Google Gemini
+    "gemini-2-flash": "gm-gf",
+    "gemini-2-flash-lite": "gm-gfl",
+    "gemini-1.5-pro": "gm-15p",
+    "gemini-1.5-flash": "gm-15f",
+    # DeepSeek Native
+    "ds-chat": "ds-chat",
+    "ds-reasoner": "ds-reas",
+    # Mistral AI
+    "ms-large": "ms-lg",
+    "ms-small": "ms-sm",
+    "ms-codestral": "ms-code",
+    # xAI Grok
+    "grok-2": "grk2",
+    # Perplexity
+    "pplx-sonar": "pplx-sn",
+    "pplx-sonar-deep": "pplx-sd",
+    # DeepInfra
+    "di-llama-70b": "di-l3-70b",
+    "di-llama-8b": "di-l3-8b",
+    "di-mixtral": "di-mx",
+    "di-qwen-72b": "di-qw72",
+    "di-deepseek": "di-ds",
+    # AI/ML API
+    "aiml-gpt-4o": "ai-g4o",
+    "aiml-gpt-4o-mini": "ai-g4m",
+    "aiml-claude-sonnet": "ai-csn",
+    "aiml-llama-70b": "ai-l3-70b",
+    "aiml-deepseek": "ai-ds",
 }
 
 MODEL_COLORS = {
+    "ollama": "yellow",
     "rakshak": "magenta",
     "deepseek": "cyan",
     "llama": "cyan",
-    "gpt-4o": "green",
-    "gpt-4o-mini": "yellow",
+    "mistral-nvidia": "blue",
+    "nebius-llama-70b": "green",
+    "nebius-llama-8b": "green",
+    "nebius-qwen-72b": "green",
+    "nebius-qwen-32b": "green",
+    "nebius-mixtral": "green",
+    "nebius-deepseek": "green",
+    "fw-llama-70b": "red",
+    "fw-llama-8b": "red",
+    "fw-mixtral": "red",
+    "fw-qwen-72b": "red",
+    "fw-deepseek-v3": "red",
+    "fw-phi-4": "red",
+    "tg-llama-70b": "blue",
+    "tg-llama-8b": "blue",
+    "tg-qwen-72b": "blue",
+    "tg-deepseek": "blue",
+    "tg-mixtral": "blue",
+    "groq-llama-70b": "yellow",
+    "groq-llama-8b": "yellow",
+    "groq-mixtral": "yellow",
+    "groq-gemma": "yellow",
+    "groq-deepseek": "yellow",
+    "gpt-4o-mini": "white",
+    "gpt-4o": "white",
+    "claude": "blue",
+    "claude-sonnet": "blue",
+    # OpenRouter
+    "or-gpt-4o": "cyan",
+    "or-gpt-4o-mini": "cyan",
+    "or-claude-sonnet": "cyan",
+    "or-claude-haiku": "cyan",
+    "or-deepseek-v3": "cyan",
+    "or-llama-70b": "cyan",
+    "or-llama-8b": "cyan",
+    "or-mixtral": "cyan",
+    "or-gemini-2-flash": "cyan",
+    "or-qwen-72b": "cyan",
+    "or-phi-4": "cyan",
+    "or-llama-3.2-3b": "cyan",
+    # Google Gemini
+    "gemini-2-flash": "blue",
+    "gemini-2-flash-lite": "blue",
+    "gemini-1.5-pro": "blue",
+    "gemini-1.5-flash": "blue",
+    # DeepSeek Native
+    "ds-chat": "magenta",
+    "ds-reasoner": "magenta",
+    # Mistral AI
+    "ms-large": "green",
+    "ms-small": "green",
+    "ms-codestral": "green",
+    # xAI Grok
+    "grok-2": "white",
+    # Perplexity
+    "pplx-sonar": "yellow",
+    "pplx-sonar-deep": "yellow",
+    # DeepInfra
+    "di-llama-70b": "red",
+    "di-llama-8b": "red",
+    "di-mixtral": "red",
+    "di-qwen-72b": "red",
+    "di-deepseek": "red",
+    # AI/ML API
+    "aiml-gpt-4o": "magenta",
+    "aiml-gpt-4o-mini": "magenta",
+    "aiml-claude-sonnet": "magenta",
+    "aiml-llama-70b": "magenta",
+    "aiml-deepseek": "magenta",
 }
 
 MODEL_DESCRIPTIONS = {
+    "ollama": "Local models via Ollama (free, private)",
     "rakshak": "Fine-tuned Qwen2.5-Coder-7B on 80K CWE samples",
     "deepseek": "DeepSeek V4 Pro via NVIDIA NIM (fast, intelligent)",
     "llama": "Llama 3.1 70B via NVIDIA NIM (high accuracy)",
-    "gpt-4o": "OpenAI GPT-4o (most capable, costly)",
+    "mistral-nvidia": "Mistral Large via NVIDIA NIM",
+    "nebius-llama-70b": "Nebius AI Studio — Llama 3.1 70B",
+    "nebius-llama-8b": "Nebius AI Studio — Llama 3.1 8B",
+    "nebius-qwen-72b": "Nebius AI Studio — Qwen 2.5 72B",
+    "nebius-qwen-32b": "Nebius AI Studio — Qwen 2.5 32B",
+    "nebius-mixtral": "Nebius AI Studio — Mixtral 8x22B",
+    "nebius-deepseek": "Nebius AI Studio — DeepSeek V2.5",
+    "fw-llama-70b": "Fireworks AI — Llama 3.1 70B (fast inference)",
+    "fw-llama-8b": "Fireworks AI — Llama 3.1 8B (fast inference)",
+    "fw-mixtral": "Fireworks AI — Mixtral 8x22B (fast inference)",
+    "fw-qwen-72b": "Fireworks AI — Qwen 2.5 72B (fast inference)",
+    "fw-deepseek-v3": "Fireworks AI — DeepSeek V3 (best of open)",
+    "fw-phi-4": "Fireworks AI — Phi-4 14B (Microsoft)",
+    "tg-llama-70b": "Together AI — Llama 3.1 70B Turbo",
+    "tg-llama-8b": "Together AI — Llama 3.1 8B Turbo",
+    "tg-qwen-72b": "Together AI — Qwen 2.5 72B Turbo",
+    "tg-deepseek": "Together AI — DeepSeek V3",
+    "tg-mixtral": "Together AI — Mixtral 8x22B",
+    "groq-llama-70b": "Groq — Llama 3.1 70B (LPU instant)",
+    "groq-llama-8b": "Groq — Llama 3.1 8B (LPU instant)",
+    "groq-mixtral": "Groq — Mixtral 8x7B (LPU instant)",
+    "groq-gemma": "Groq — Gemma 2 9B (LPU instant)",
+    "groq-deepseek": "Groq — DeepSeek R1 Distill Llama 70B",
     "gpt-4o-mini": "OpenAI GPT-4o Mini (fast, economical)",
+    "gpt-4o": "OpenAI GPT-4o (best overall)",
+    "claude": "Anthropic Claude Haiku (fast, affordable)",
+    "claude-sonnet": "Anthropic Claude Sonnet 3.5 (top-tier code)",
+    # OpenRouter
+    "or-gpt-4o": "OpenRouter — GPT-4o (200+ models via single API)",
+    "or-gpt-4o-mini": "OpenRouter — GPT-4o Mini",
+    "or-claude-sonnet": "OpenRouter — Claude Sonnet 3.5",
+    "or-claude-haiku": "OpenRouter — Claude Haiku 3.5",
+    "or-deepseek-v3": "OpenRouter — DeepSeek V3",
+    "or-llama-70b": "OpenRouter — Llama 3.1 70B",
+    "or-llama-8b": "OpenRouter — Llama 3.1 8B",
+    "or-mixtral": "OpenRouter — Mixtral 8x22B",
+    "or-gemini-2-flash": "OpenRouter — Gemini 2.0 Flash",
+    "or-qwen-72b": "OpenRouter — Qwen 2.5 72B",
+    "or-phi-4": "OpenRouter — Phi-4 14B",
+    "or-llama-3.2-3b": "OpenRouter — Llama 3.2 3B",
+    # Google Gemini
+    "gemini-2-flash": "Google Gemini 2.0 Flash (fast, multimodal)",
+    "gemini-2-flash-lite": "Google Gemini 2.0 Flash Lite (cheapest)",
+    "gemini-1.5-pro": "Google Gemini 1.5 Pro (1M context)",
+    "gemini-1.5-flash": "Google Gemini 1.5 Flash (balanced)",
+    # DeepSeek Native
+    "ds-chat": "DeepSeek V3 Chat (native API, cost-effective)",
+    "ds-reasoner": "DeepSeek R1 Reasoner (chain-of-thought)",
+    # Mistral AI
+    "ms-large": "Mistral Large 2 (top-tier European model)",
+    "ms-small": "Mistral Small (fast, economical)",
+    "ms-codestral": "Codestral (code-specialized Mistral)",
+    # xAI Grok
+    "grok-2": "xAI Grok 2 (real-time knowledge)",
+    # Perplexity
+    "pplx-sonar": "Perplexity Sonar Pro (online search augmented)",
+    "pplx-sonar-deep": "Perplexity Sonar Deep (deep reasoning)",
+    # DeepInfra
+    "di-llama-70b": "DeepInfra — Llama 3.1 70B (serverless GPU)",
+    "di-llama-8b": "DeepInfra — Llama 3.1 8B",
+    "di-mixtral": "DeepInfra — Mixtral 8x22B",
+    "di-qwen-72b": "DeepInfra — Qwen 2.5 72B",
+    "di-deepseek": "DeepInfra — DeepSeek V3",
+    # AI/ML API
+    "aiml-gpt-4o": "AI/ML API — GPT-4o (cheaper OpenAI alternative)",
+    "aiml-gpt-4o-mini": "AI/ML API — GPT-4o Mini",
+    "aiml-claude-sonnet": "AI/ML API — Claude Sonnet 3.5",
+    "aiml-llama-70b": "AI/ML API — Llama 3.1 70B",
+    "aiml-deepseek": "AI/ML API — DeepSeek V3",
 }
 
 SEV_STYLES = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "blue", "info": "dim white"}
@@ -125,63 +398,42 @@ def create_scan_progress() -> Progress:
 # ── Output ─────────────────────────────────────────────────
 
 def show_banner(model_name: str = "rakshak"):
-    """World-class startup banner - the most beautiful CLI you've ever seen."""
-    
-    # Epic RAKSHAKAI ASCII art
-    banner_art = """
-[bold cyan]
-    ██████╗  ██████╗ ██╗  ██╗███████╗██╗  ██╗ █████╗ ██╗  ██╗ █████╗ ██╗
-    ██╔══██╗██╔═══██╗██║ ██╔╝██╔════╝██║  ██║██╔══██╗██║ ██╔╝██╔══██╗██║
-    ██████╔╝███████║█████╔╝ ███████╗███████║███████║█████╔╝ ███████║██║
-    ██╔══██╗██╔══██║██╔═██╗ ╚════██║██╔══██║██╔══██║██╔═██╗ ██╔══██║██║
-    ██║  ██║██║  ██║██║  ██╗███████║██║  ██║██║  ██║██║  ██╗██║  ██║██║
-    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝
-[/bold cyan]
-    [bold yellow]The World's Fastest & Most Intelligent Security AI - Mythos Edition[/bold yellow]
-    """
-    
-    console.print(banner_art)
-    
-    # Epic features showcase
-    features = Text()
-    features.append("⚡ ", style="yellow bold")
-    features.append("10x Faster", style="yellow")
-    features.append(" • ", style="dim")
-    features.append("🛡️ ", style="blue bold")
-    features.append("Military Grade", style="blue")
-    features.append(" • ", style="dim")
-    features.append("🧠 ", style="magenta bold")
-    features.append("Claude Mythos Intelligence", style="magenta")
-    features.append(" • ", style="dim")
-    features.append("💰 ", style="green bold")
-    features.append("90% Token Savings", style="green")
-    
-    console.print(Align.center(features))
-    console.print()
-    
-    # System info panel with enhanced styling
+    """Startup banner with logo."""
+    if not model_name:
+        model_name = "rakshak"
     model_color = MODEL_COLORS.get(model_name, "white")
     model_label = MODEL_LABELS.get(model_name, model_name)
-    
-    info_table = Table.grid(padding=(0, 3))
-    info_table.add_column(style="bold cyan", justify="right", width=15)
-    info_table.add_column(style="bold white")
-    
-    info_table.add_row("🔥 Version", "[yellow]v3.0 Quantum Edition[/yellow]")
-    info_table.add_row("🤖 Active Model", f"[{model_color}]{model_label}[/{model_color}]")
-    info_table.add_row("💻 Platform", f"[green]{platform.system()} {platform.machine()}[/green]")
-    info_table.add_row("🐍 Python", f"[blue]{sys.version.split()[0]}[/blue]")
-    info_table.add_row("⚡ Mode", "[yellow bold]ULTRA-FAST • Token Optimized[/yellow bold]")
-    info_table.add_row("⚙️  Status", "[green bold]● ONLINE[/green bold]")
-    
-    panel = Panel(
-        Align.center(info_table),
-        title="[bold yellow]⚡ RAKSHAKAI QUANTUM CORE ⚡[/bold yellow]",
-        subtitle="[dim]Type /help for superpowers • Mythos-level intelligence, minimal tokens[/dim]",
-        border_style="bold cyan",
-        padding=(1, 2),
-    )
-    console.print(panel)
+
+    logo = """
+[bold cyan]
+    ██████╗  ██████╗ ██╗  ██╗███████╗██╗  ██╗ █████╗ ██╗
+    ██╔══██╗██╔═══██╗██║ ██╔╝██╔════╝██║  ██║██╔══██╗██║
+    ██████╔╝███████║█████╔╝ ███████╗███████║███████║██║
+    ██╔══██╗██╔══██║██╔═██╗ ╚════██║██╔══██║██╔══██║██║
+    ██║  ██║██║  ██║██║  ██╗███████║██║  ██║██║  ██║██║
+    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝
+[/bold cyan]"""
+
+    console.print(logo)
+
+    info = Text()
+    info.append("  ")
+    info.append(f"●", style=f"bold {model_color}")
+    info.append(f" {model_label}", style=model_color)
+    info.append("  ", style="dim")
+    info.append("|", style="dim")
+    info.append("  /help  ", style="bold")
+    info.append("|", style="dim")
+    info.append("  /models  ", style="bold")
+    info.append("|", style="dim")
+    info.append("  /scan", style="bold")
+
+    console.print(Panel(
+        info,
+        subtitle="[dim]AI security scanner \u2014 150+ patterns, 65+ models[/dim]",
+        border_style="#00e5ff",
+        padding=(0, 2),
+    ))
     console.print()
 
 
@@ -439,18 +691,33 @@ def show_help():
         header_style="bold cyan",
         border_style="cyan",
     )
-    table.add_column("Command", style="green bold", width=22)
+    table.add_column("Command", style="green bold", width=24)
     table.add_column("Description")
     
     commands = [
         ("/scan <file>", "Scan a file for vulnerabilities"),
+        ("/scan-project", "Scan entire project & AI-prioritize fixes"),
         ("/explain <file>", "Get detailed code explanation"),
-        ("/fix <description>", "Generate security fix"),
+        ("/fix <desc> [--test]", "Generate security fix & optionally run tests"),
         ("/batch <dir>", "Scan entire directory"),
         ("/watch <dir>", "Watch directory for changes"),
         ("/watch-stop", "Stop file watcher"),
         ("/diff", "Scan git changes"),
         ("/precommit [cmd]", "Manage git pre-commit hook"),
+        ("/test [file]", "Auto-detect and run tests"),
+        ("", ""),
+        ("/index [dir]", "Index codebase for semantic search (NEW!)"),
+        ("/search <query>", "Semantic search in codebase (NEW!)"),
+        ("", ""),
+        ("/def <file:line:col>", "Jump to symbol definition (LSP)"),
+        ("/refs <file:line:col>", "Find all symbol references (LSP)"),
+        ("/hover <file:line:col>", "Show type hints & docs (LSP)"),
+        ("/rename <loc> <name>", "Rename symbol everywhere (LSP)"),
+        ("", ""),
+        ("/share [upload|export]", "Share session via URL or export to file"),
+        ("/login", "Login via web browser"),
+        ("/logout", "Logout and clear credentials"),
+        ("/whoami", "Show current login status"),
         ("", ""),
         ("/model <name>", "Switch active model"),
         ("/models", "List all available models"),
@@ -464,7 +731,8 @@ def show_help():
         ("/confirm <id>", "Mark finding as true positive"),
         ("/dismiss <id>", "Mark finding as false positive"),
         ("", ""),
-        ("/agent <task>", "Run autonomous agent on a task"),
+        ("/agent <task>", "Run autonomous agent"),
+        ("/swarm <task>", "Multi-agent swarm (parallel subagents)"),
         ("/skills [name]", "List skills or show details / refresh"),
         ("", ""),
         ("/clear", "Clear conversation context"),
@@ -480,40 +748,35 @@ def show_help():
             table.add_row(cmd, desc)
     
     console.print(table)
+    console.print("\n[bold cyan]NEW FEATURES:[/]")
+    console.print("  • LSP integration for symbol navigation (/def, /refs, /hover, /rename)")
+    console.print("  • Auto-test runner (/test, /fix --test)")
+    console.print("  • Session sharing (/share upload)")
+    console.print("  • Codebase indexing (/index, /search)")
+    console.print("  • Headless JSON mode (--json flag)")
     console.print("\n[dim]Tip: Use Tab for auto-completion • Ctrl+C to cancel • Ctrl+D to exit[/]\n")
 
 
 def show_model_list(models: dict, active_model: str):
-    """Display beautiful model selector."""
-    table = Table(
-        title="[bold cyan]Available Models[/]",
-        box=box.ROUNDED,
-        show_header=True,
-        header_style="bold cyan",
-        border_style="cyan",
-        padding=(0, 2),
-    )
-    
-    table.add_column("", width=3)
-    table.add_column("Model", style="bold")
-    table.add_column("Provider")
-    table.add_column("Description")
-    
+    """Display models grouped by provider (opencode-style)."""
+    providers: dict[str, list[str]] = {}
     for name, cfg in models.items():
-        is_active = name == active_model
-        marker = "[green]●[/]" if is_active else "[dim]○[/]"
-        model_color = MODEL_COLORS.get(name, "white")
-        model_label = MODEL_LABELS.get(name, name)
-        desc = MODEL_DESCRIPTIONS.get(name, f"{cfg.provider} / {cfg.model}")
-        
-        table.add_row(
-            marker,
-            f"[{model_color}]{model_label}[/]" if not is_active else f"[{model_color} bold]{model_label}[/]",
-            cfg.provider,
-            f"[dim]{desc}[/]" if not is_active else desc,
-        )
-    
-    console.print(table)
+        prov = cfg.provider or "other"
+        providers.setdefault(prov, []).append(name)
+
+    console.print()
+    for prov, names in providers.items():
+        console.print(f"  [bold white on #333333]  {prov.upper()}  [/]")
+        for name in names:
+            label = MODEL_LABELS.get(name, name)
+            color = MODEL_COLORS.get(name, "white")
+            mark = "[green]●[/]" if name == active_model else " "
+            desc = MODEL_DESCRIPTIONS.get(name, "")
+            console.print(
+                f"  {mark}  [{color}]{label}[/]"
+                f"{'  [dim]' + desc + '[/dim]' if desc else ''}"
+            )
+        console.print()
 
 
 def show_stats_table(stats: dict):
@@ -649,33 +912,163 @@ def show_session_summary(
 
 
 def interactive_model_selector(models: dict, current_model: str) -> Optional[str]:
-    """Interactive model selector with arrow keys (like opencode/kiro-cli)."""
+    """Interactive model selector — type number or name (like opencode)."""
+    providers: dict[str, list[tuple[int, str]]] = {}
+    numbered: list[str] = []
+    idx = 0
+
+    for name, cfg in models.items():
+        idx += 1
+        numbered.append(name)
+        prov = cfg.provider or "other"
+        providers.setdefault(prov, []).append((idx, name))
+
+    console.print()
+    for prov, items in providers.items():
+        console.print(f"  [bold white on #333333]  {prov.upper()}  [/]")
+        for num, name in items:
+            label = MODEL_LABELS.get(name, name)
+            color = MODEL_COLORS.get(name, "white")
+            mark = "[green]●[/]" if name == current_model else " "
+            desc = MODEL_DESCRIPTIONS.get(name, "")
+            console.print(
+                f"  {mark} [dim]{num}.[/] [{color}]{label}[/]"
+                f"{'  [dim]' + desc + '[/dim]' if desc else ''}"
+            )
+    console.print()
+
     try:
         from prompt_toolkit import prompt
-        from prompt_toolkit.shortcuts import radiolist_dialog
-        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
+        from prompt_toolkit.validation import Validator
+
+        word_comp = WordCompleter(list(models.keys()) + [str(i) for i in range(1, len(models) + 1)])
+
+        choice = prompt(
+            "  Select model (number or name): ",
+            completer=FuzzyCompleter(word_comp),
+            complete_while_typing=True,
+        ).strip()
     except ImportError:
-        show_error("prompt_toolkit required for interactive selection")
+        choice = input("  Select model (number or name): ").strip()
+
+    if not choice:
         return None
-    
-    # Build choices
-    choices = []
-    for name, cfg in models.items():
-        model_label = MODEL_LABELS.get(name, name)
-        desc = MODEL_DESCRIPTIONS.get(name, f"{cfg.provider} / {cfg.model}")
-        is_current = "(current)" if name == current_model else ""
-        
-        display_text = f"{model_label} - {desc} {is_current}"
-        choices.append((name, display_text))
-    
-    try:
-        result = radiolist_dialog(
-            title="Select Model",
-            text="Choose a security scanning model:",
-            values=choices,
-            default=current_model,
-        ).run()
-        
-        return result
-    except Exception:
-        return None
+
+    if choice.isdigit():
+        n = int(choice)
+        if 1 <= n <= len(numbered):
+            return numbered[n - 1]
+
+    if choice in models:
+        return choice
+
+    # fuzzy match
+    low = choice.lower()
+    for name in models:
+        label = MODEL_LABELS.get(name, name).lower()
+        if low in label or low in name:
+            return name
+
+    show_error(f"Unknown model: {choice}")
+    return None
+
+
+# ── Action Display (claude-code style) ─────────────────────
+
+def show_tool_call(name: str, args: dict, start_time: float = 0):
+    """Display a tool call action line like claude-code: → action_name (params)"""
+    params_str = ", ".join(f"{k}={v}" for k, v in args.items())
+    show = f"  [bold cyan]→ {name}[/]"
+    if params_str:
+        show += f" [dim]({params_str})[/dim]"
+    console.print(show)
+
+
+def show_tool_result(result_summary: str):
+    """Show a brief tool result after execution."""
+    if result_summary:
+        console.print(f"    [dim]{result_summary[:120]}[/dim]")
+
+
+def show_thought_timing(start: float, end: float):
+    """Show thought timing like claude-code: 'Thought: X.Xs'"""
+    elapsed = end - start
+    if elapsed >= 0.1:
+        console.print(f"  [dim]Thought: {elapsed:.1f}s[/dim]")
+
+
+def show_tool_error(name: str, error: str):
+    """Show a tool error."""
+    console.print(f"  [red]→ {name}[/] [red]Error:[/] [dim]{error}[/dim]")
+
+
+def show_swarm_results(result: dict):
+    """Display multi-agent swarm execution results."""
+    from rich.tree import Tree
+
+    success = result.get("fail_count", 0) == 0
+    border = "green" if success else "yellow"
+    title = "✓ Swarm Complete" if success else "⚠ Swarm Partial"
+
+    tree = Tree(
+        f"[bold]{result['task'][:80]}[/]",
+        guide_style="dim cyan",
+    )
+    for sr in result.get("subtask_results", []):
+        icon = "✓" if sr["success"] else "✗"
+        color = "green" if sr["success"] else "red"
+        label = (
+            f"[bold {color}]{icon} {sr['id']}[/] "
+            f"[dim]({sr['steps']} steps, {sr['elapsed_ms']}ms)[/dim]"
+        )
+        branch = tree.add(label)
+        if sr.get("preview"):
+            branch.add(f"[dim]{sr['preview'][:120]}[/dim]")
+        if sr.get("error"):
+            branch.add(f"[red]{sr['error'][:200]}[/red]")
+
+    summary = (
+        f"Sub-tasks: {result['subtask_count']} | "
+        f"Succeeded: {result['success_count']} | "
+        f"Failed: {result['fail_count']} | "
+        f"Total wall time: {result['total_elapsed_ms']}ms"
+    )
+
+    panel = Panel(
+        tree,
+        title=f"[bold]{title}[/]",
+        border_style=border,
+        subtitle=f"[dim]{summary}[/dim]",
+        padding=(1, 2),
+    )
+    console.print(panel)
+
+
+def show_auth_status(state):
+    """Display auth status panel."""
+    if not state.logged_in:
+        panel = Panel(
+            "[yellow]Not logged in[/]\n\nUse [bold]/login[/] to authenticate via web browser.\nOr set [bold]RAKSHAKAI_TOKEN[/] env var.",
+            title="Authentication",
+            border_style="yellow",
+            padding=(1, 2),
+        )
+        console.print(panel)
+        return
+
+    info = Table.grid(padding=(0, 2))
+    info.add_column(style="bold cyan", justify="right", width=14)
+    info.add_column(style="bold white")
+
+    info.add_row("Email", state.email)
+    info.add_row("Plan", f"[green]{state.plan.title()}[/green]")
+    info.add_row("Logged in", f"[green]{state.elapsed} ago[/green]")
+
+    panel = Panel(
+        Align.center(info),
+        title="[bold green]✓ Authenticated[/bold green]",
+        border_style="green",
+        padding=(1, 2),
+    )
+    console.print(panel)
