@@ -31,7 +31,7 @@ $PIP install --break-system-packages \
     transformers==4.47.1 \
     accelerate==1.2.1 \
     peft==0.14.0 \
-    datasets==3.2.0 \
+    datasets==2.21.0 \
     sentencepiece==0.2.0 \
     protobuf==5.29.2 \
     2>&1 | tail -5
