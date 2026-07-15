@@ -22,7 +22,7 @@ eval_strategy: steps
 # Training hyperparameters
 learning_rate: 1e-5      # Higher than original 5e-6
 num_epochs: 2            # 2 epochs for better preference learning
-warmup_ratio: 0.1
+warmup_steps: 174  # ~10% of 1744 total steps (7K samples, bs=8, 2 epochs)
 lr_scheduler: cosine
 optimizer: adamw_8bit
 
