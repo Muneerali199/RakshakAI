@@ -3,20 +3,31 @@
 # Run this BEFORE training to avoid mid-training crashes
 set -e
 
+# Detect pip (Lightning.ai puts it in miniconda3)
+if command -v pip &>/dev/null; then
+    PIP=pip
+elif [ -f /home/zeus/miniconda3/bin/pip ]; then
+    PIP=/home/zeus/miniconda3/bin/pip
+else
+    echo "ERROR: pip not found. Set PATH to include pip."
+    exit 1
+fi
+
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║  RakshakAI Dependency Installation (Lightning.ai)           ║"
+echo "║  Using: $PIP"
 echo "╚══════════════════════════════════════════════════════════════╝"
 
 START=$SECONDS
 
 echo "[1/5] Updating pip..."
-pip install --upgrade pip --break-system-packages 2>&1 | tail -3
+$PIP install --upgrade pip --break-system-packages 2>&1 | tail -3
 
 echo "[2/5] Installing PyTorch 2.5.1..."
-pip install --break-system-packages torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121 2>&1 | tail -5
+$PIP install --break-system-packages torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121 2>&1 | tail -5
 
 echo "[3/5] Installing core ML libraries..."
-pip install --break-system-packages \
+$PIP install --break-system-packages \
     transformers==4.47.1 \
     accelerate==1.2.1 \
     peft==0.14.0 \
@@ -26,7 +37,7 @@ pip install --break-system-packages \
     2>&1 | tail -5
 
 echo "[4/5] Installing training utilities..."
-pip install --break-system-packages \
+$PIP install --break-system-packages \
     bitsandbytes==0.45.0 \
     tensorboard==2.18.0 \
     wandb==0.19.1 \
@@ -34,7 +45,7 @@ pip install --break-system-packages \
     2>&1 | tail -5
 
 echo "[5/5] Installing axolotl 0.6.0..."
-pip install --break-system-packages axolotl==0.6.0 2>&1 | tail -5
+$PIP install --break-system-packages axolotl==0.6.0 2>&1 | tail -5
 
 # Verify installations
 echo ""

@@ -5,6 +5,10 @@
 set -e
 cd ~
 
+# Ensure pip is in PATH (Lightning.ai puts it in miniconda3)
+export PATH="/home/zeus/miniconda3/bin:$PATH"
+which pip >/dev/null 2>&1 || { echo "ERROR: pip not found"; exit 1; }
+
 START=$SECONDS
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║   RakshakAI 14B Production Training                         ║"
@@ -13,7 +17,13 @@ echo "║   A100 80GB @ \$2.50/hr · Budget: \$14 = 5.6h                ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 
 echo "[1/7] Cloning repo..."
-GIT_ASKPASS=echo git clone https://github.com/Muneerali199/RakshakAI.git ~/RakshakAI --depth 1 2>&1 | tail -3
+if [ -d ~/RakshakAI/.git ]; then
+    echo "  Repo already exists — pulling latest..."
+    cd ~/RakshakAI && git pull 2>&1 | tail -3
+else
+    rm -rf ~/RakshakAI 2>/dev/null
+    GIT_ASKPASS=echo git clone https://github.com/Muneerali199/RakshakAI.git ~/RakshakAI --depth 1 2>&1 | tail -3
+fi
 
 echo "[2/7] Installing dependencies..."
 cd ~/RakshakAI
