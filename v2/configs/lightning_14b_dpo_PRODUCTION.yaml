@@ -9,13 +9,9 @@ dataloader_num_workers: 2
 dataset_prepared_path: v2/prepared/dpo_14b
 
 datasets:
-  - type: dpo
-    ds_type: json
-    chat_template: chatml
-    field_chosen: chosen
-    field_rejected: rejected
+  - ds_type: json
     data_files:
-      - v2/inputs/datasets/axolotl/dpo_train.jsonl
+      - v2/inputs/datasets/axolotl/dpo_train_processed.jsonl
     split: train
 
 # Evaluation

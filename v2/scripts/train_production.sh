@@ -102,7 +102,11 @@ if [ ! -f "v2/model/sft_14b/adapter_config.json" ]; then
 fi
 
 echo "[6/7] Starting DPO training (~1.6h, 2 epochs)..."
-echo "  Dataset: dpo_train.jsonl (7K pairs)"
+echo "  Preprocessing DPO data..."
+python3 v2/scripts/preprocess_dpo.py \
+  v2/inputs/datasets/axolotl/dpo_train.jsonl \
+  v2/inputs/datasets/axolotl/dpo_train_processed.jsonl
+echo "  Dataset: dpo_train_processed.jsonl (7K pairs)"
 echo "  Base: SFT adapter from previous step"
 python -m axolotl.cli.train v2/configs/lightning_14b_dpo_PRODUCTION.yaml 2>&1 | tee ~/train_dpo.log
 
