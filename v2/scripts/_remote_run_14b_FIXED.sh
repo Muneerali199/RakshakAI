@@ -64,10 +64,29 @@ python3 -c "import torch; print(f'  PyTorch {torch.__version__}, CUDA: {torch.cu
 python3 -c "from transformers import AutoModel; print('  transformers OK')"
 python3 -c "from axolotl.cli import train; print('  axolotl OK')"
 
-echo "[5/6] 14B SFT phase (~3.5h with FIXED config)..."
-echo "  Changes: gradient clipping, cleaned val data, better eval settings"
-cd ~/RakshakAI
-python -m axolotl.cli.train v2/configs/lightning_14b_sft_v2_FIXED.yaml 2>&1 | tee ~/train_sft.log
+# Check if reasoning-enhanced dataset is available
+REASONING_CONFIG="v2/configs/lightning_14b_sft_v2_FIXED.yaml"
+if python3 -c "from huggingface_hub import hf_hub_url; import requests; r=requests.head(hf_hub_url('Muneerali199/rakshak-cwe-v3-data', 'train_87k_with_reasoning.jsonl', repo_type='dataset')); exit(0 if r.status_code==200 else 1)" 2>/dev/null; then
+    echo "[5/6] 14B SFT phase (~3.6h with REASONING data)..."
+    echo "  Using 250K SFT + 9K DeepSeek reasoning traces"
+    cd ~/RakshakAI
+    # Download the reasoning-enhanced dataset
+    python3 -c "
+from huggingface_hub import hf_hub_download
+import os
+dst = os.path.expanduser('~/RakshakAI/v2/inputs/datasets/axolotl')
+path = hf_hub_download('Muneerali199/rakshak-cwe-v3-data', 'train_87k_with_reasoning.jsonl', repo_type='dataset')
+os.system(f'cp {path} {dst}/train_87k_with_reasoning.jsonl')
+sz = os.path.getsize(f'{dst}/train_87k_with_reasoning.jsonl') / 1024 / 1024
+print(f'Downloaded reasoning-enhanced dataset ({sz:.0f}MB)')
+"
+    python -m axolotl.cli.train v2/configs/lightning_14b_sft_v2_REASONING.yaml 2>&1 | tee ~/train_sft.log
+else
+    echo "[5/6] 14B SFT phase (~3.5h with FIXED config)..."
+    echo "  Using standard 250K SFT data"
+    cd ~/RakshakAI
+    python -m axolotl.cli.train v2/configs/lightning_14b_sft_v2_FIXED.yaml 2>&1 | tee ~/train_sft.log
+fi
 SFT_END=$SECONDS
 echo "SFT done: $(( (SFT_END - START) / 60 )) min elapsed"
 
