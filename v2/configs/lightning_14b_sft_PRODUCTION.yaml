@@ -36,11 +36,11 @@ learning_rate: 1.5e-4
 num_epochs: 1
 warmup_ratio: 0.03
 lr_scheduler: cosine
-optimizer: adamw_8bit
+optimizer: paged_adamw_8bit
 
 # Batch settings
-micro_batch_size: 4
-gradient_accumulation_steps: 4  # Effective batch = 16
+micro_batch_size: 2
+gradient_accumulation_steps: 8  # Effective batch = 16
 
 # Memory optimization  
 load_in_4bit: true
