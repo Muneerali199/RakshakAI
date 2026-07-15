@@ -50,7 +50,7 @@ def rand_param(rng):
 # ─── SQL INJECTION LOOKALIKES ─────────────────────────────────────────
 
 @register
-def gen_sqli_hard_negatives(rng, count=8000):
+def gen_sqli_hard_negatives(rng, count=15000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -96,7 +96,7 @@ def {func}({param}):
 
 
 @register
-def gen_java_sqli_hard_negatives(rng, count=5000):
+def gen_java_sqli_hard_negatives(rng, count=10000):
     results = []
     for _ in range(count):
         func = f"find{rng.choice(FUNC_SUFFIXES)}"
@@ -143,7 +143,7 @@ def gen_java_sqli_hard_negatives(rng, count=5000):
 
 
 @register
-def gen_js_sqli_hard_negatives(rng, count=4000):
+def gen_js_sqli_hard_negatives(rng, count=8000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -181,7 +181,7 @@ def gen_js_sqli_hard_negatives(rng, count=4000):
 # ─── XSS LOOKALIKES ──────────────────────────────────────────────────
 
 @register
-def gen_xss_hard_negatives(rng, count=6000):
+def gen_xss_hard_negatives(rng, count=12000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -226,7 +226,7 @@ public String {func}(String {param}) {{
 # ─── COMMAND INJECTION LOOKALIKES ────────────────────────────────────
 
 @register
-def gen_cmdi_hard_negatives(rng, count=5000):
+def gen_cmdi_hard_negatives(rng, count=10000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -276,7 +276,7 @@ def {func}({param}):
 # ─── PATH TRAVERSAL LOOKALIKES ──────────────────────────────────────
 
 @register
-def gen_path_hard_negatives(rng, count=4000):
+def gen_path_hard_negatives(rng, count=8000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -319,7 +319,7 @@ def {func}({param}):
 # ─── DESERIALIZATION LOOKALIKES ─────────────────────────────────────
 
 @register
-def gen_deser_hard_negatives(rng, count=3000):
+def gen_deser_hard_negatives(rng, count=6000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -358,7 +358,7 @@ def {func}({param}):
 # ─── CRYPTO LOOKALIKES ──────────────────────────────────────────────
 
 @register
-def gen_crypto_hard_negatives(rng, count=3000):
+def gen_crypto_hard_negatives(rng, count=6000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -390,7 +390,7 @@ def {func}({param}: bytes) -> bytes:
 # ─── BUFFER OVERFLOW LOOKALIKES (C) ─────────────────────────────────
 
 @register
-def gen_bo_hard_negatives(rng, count=4000):
+def gen_bo_hard_negatives(rng, count=8000):
     results = []
     for _ in range(count):
         func = f"{rng.choice(FUNC_PREFIXES)}_{rng.choice(FUNC_SUFFIXES).lower()}"
@@ -433,7 +433,7 @@ void {func}(const char* src) {{
 # ─── SSRF LOOKALIKES ────────────────────────────────────────────────
 
 @register
-def gen_ssrf_hard_negatives(rng, count=3000):
+def gen_ssrf_hard_negatives(rng, count=6000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -478,7 +478,7 @@ async def {func}({param}):
 # ─── AUTH BYPASS LOOKALIKES ─────────────────────────────────────────
 
 @register
-def gen_auth_hard_negatives(rng, count=3000):
+def gen_auth_hard_negatives(rng, count=6000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -531,7 +531,7 @@ def {func}(request):
 # ─── CSRF LOOKALIKES ───────────────────────────────────────────────
 
 @register
-def gen_csrf_hard_negatives(rng, count=2000):
+def gen_csrf_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -565,7 +565,7 @@ app.post('/{func}', csrfProtection, async (req, res) => {{
 # ─── PROTOTYPE POLLUTION LOOKALIKES ─────────────────────────────────
 
 @register
-def gen_proto_hard_negatives(rng, count=2000):
+def gen_proto_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -602,7 +602,7 @@ def gen_proto_hard_negatives(rng, count=2000):
 # ─── NOSQL INJECTION LOOKALIKES ─────────────────────────────────────
 
 @register
-def gen_nosql_hard_negatives(rng, count=2000):
+def gen_nosql_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -633,7 +633,7 @@ def gen_nosql_hard_negatives(rng, count=2000):
 # ─── WEAK RANDOMNESS LOOKALIKES ─────────────────────────────────────
 
 @register
-def gen_random_hard_negatives(rng, count=2000):
+def gen_random_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -666,7 +666,7 @@ function {func}(length = 32) {{
 # ─── PHP HARD NEGATIVES ────────────────────────────────────────────
 
 @register
-def gen_php_hard_negatives(rng, count=3000):
+def gen_php_hard_negatives(rng, count=6000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -704,7 +704,7 @@ def gen_php_hard_negatives(rng, count=3000):
 # ─── GO HARD NEGATIVES ─────────────────────────────────────────────
 
 @register
-def gen_go_hard_negatives(rng, count=3000):
+def gen_go_hard_negatives(rng, count=6000):
     results = []
     for _ in range(count):
         func = f"{rng.choice(FUNC_PREFIXES)}{rng.choice(FUNC_SUFFIXES)}"
@@ -746,7 +746,7 @@ def gen_go_hard_negatives(rng, count=3000):
 # ─── CSHARP HARD NEGATIVES ─────────────────────────────────────────
 
 @register
-def gen_csharp_hard_negatives(rng, count=2000):
+def gen_csharp_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rng.choice(FUNC_PREFIXES) + rng.choice(FUNC_SUFFIXES)
@@ -772,7 +772,7 @@ def gen_csharp_hard_negatives(rng, count=2000):
 # ─── RUBY HARD NEGATIVES ──────────────────────────────────────────
 
 @register
-def gen_ruby_hard_negatives(rng, count=2000):
+def gen_ruby_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -789,7 +789,7 @@ end"""
 # ─── RUST HARD NEGATIVES ──────────────────────────────────────────
 
 @register
-def gen_rust_hard_negatives(rng, count=2000):
+def gen_rust_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -820,7 +820,7 @@ def gen_rust_hard_negatives(rng, count=2000):
 # ─── SWIFT HARD NEGATIVES ─────────────────────────────────────────
 
 @register
-def gen_swift_hard_negatives(rng, count=2000):
+def gen_swift_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -840,7 +840,7 @@ def gen_swift_hard_negatives(rng, count=2000):
 # ─── KOTLIN HARD NEGATIVES ────────────────────────────────────────
 
 @register
-def gen_kotlin_hard_negatives(rng, count=2000):
+def gen_kotlin_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -860,7 +860,7 @@ def gen_kotlin_hard_negatives(rng, count=2000):
 # ─── XXE LOOKALIKES ──────────────────────────────────────────────
 
 @register
-def gen_xxe_hard_negatives(rng, count=2000):
+def gen_xxe_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -888,7 +888,7 @@ def {func}({param}):
 # ─── RACE CONDITION LOOKALIKES ────────────────────────────────────
 
 @register
-def gen_race_hard_negatives(rng, count=2000):
+def gen_race_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -936,7 +936,7 @@ def {func}(fileobj):
 # ─── SSTI LOOKALIKES ─────────────────────────────────────────────
 
 @register
-def gen_ssti_hard_negatives(rng, count=2000):
+def gen_ssti_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -957,7 +957,7 @@ def {func}({param}):
 # ─── IDOR LOOKALIKES ─────────────────────────────────────────────
 
 @register
-def gen_idor_hard_negatives(rng, count=2000):
+def gen_idor_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -978,7 +978,7 @@ def {func}(request, pk):
 # ─── LOG INJECTION LOOKALIKES ─────────────────────────────────────
 
 @register
-def gen_log_hard_negatives(rng, count=2000):
+def gen_log_hard_negatives(rng, count=4000):
     results = []
     for _ in range(count):
         func = rand_func(rng)
@@ -1053,7 +1053,7 @@ def generate_all_hard_negatives(target=25000) -> list[dict]:
 
 
 def main():
-    target = 60000
+    target = 150000
     samples = generate_all_hard_negatives(target=target)
 
     HARD_NEGATIVES_DIR.mkdir(parents=True, exist_ok=True)

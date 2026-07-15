@@ -53,8 +53,8 @@
     "scanner.js",
     "rakshak_cli.py",
     "setup.py",
+    "public/",
     "v2/cli/",
-    "scripts/",
-    "public/"
+    "scripts/"
   ]
 }

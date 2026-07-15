@@ -29,15 +29,37 @@ def main() -> int:
     ap.add_argument("--skip-download", action="store_true")
     ap.add_argument("--skip-pack", action="store_true")
     ap.add_argument("--only", nargs="*", default=None,
-                    help="restrict to one or more of: download, clean, dedup, instruct, pack, validate")
+                    help="restrict to one or more of: download, import, clean, dedup, instruct, pack, validate")
+    ap.add_argument("--skip-import", action="store_true",
+                    help="skip the import stage (useful during iterative development)")
     args = ap.parse_args()
 
-    stages = ["download", "clean", "dedup", "instruct", "pack", "validate"]
+    stages = ["download", "import", "clean", "dedup", "instruct", "pack", "validate"]
     if args.only:
         stages = [s for s in stages if s in args.only]
 
     if "download" in stages and not args.skip_download:
         run([PY, "v2/dataset/download.py"])
+
+    if "import" in stages and not args.skip_import:
+        importers = [
+            ("bigvul",  "v2/dataset/importers/convert_bigvul.py"),
+            ("devign",  "v2/dataset/importers/convert_devign.py"),
+            ("primevul","v2/dataset/importers/convert_primevul.py"),
+            ("securityeval", "v2/dataset/importers/convert_securityeval.py"),
+            ("cvefixes","v2/dataset/importers/convert_cvefixes.py"),
+            ("crossvul","v2/dataset/importers/convert_crossvul.py"),
+            # Phase B expansion
+            ("morefixes","v2/dataset/importers/convert_morefixes.py"),
+            ("purplellama","v2/dataset/importers/convert_purplellama.py"),
+            ("securityeval2","v2/dataset/importers/convert_securityeval2.py"),
+            ("datadog", "v2/dataset/importers/convert_datadog.py"),
+        ]
+        for name, script in importers:
+            print(f"\n>>> Importing {name} ({script})\n", flush=True)
+            res = subprocess.run([PY, script], cwd=str(REPO))
+            if res.returncode != 0:
+                print(f"[orchestrate] WARNING: {name} importer returned {res.returncode}")
 
     if "clean" in stages:
         run([PY, "v2/dataset/clean.py"])

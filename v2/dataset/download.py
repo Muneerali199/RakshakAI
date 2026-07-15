@@ -1,17 +1,27 @@
 """
-RakshakAI v2 — Phase 2.1: Dataset downloader.
+RakshakAI v2 — Phase 2.5: Dataset downloader (expansion).
 
-Pulls every training source we will use, into v2/inputs/datasets/raw/.
+Pulls every training source into v2/inputs/datasets/raw/.
 
-Sources:
-  - BigVul     (Mendeley Data) — 3,754 CVEs, C/C++ function-level
-  - Devign     (HuggingFace)   — 27,318 C functions
-  - PrimeVul   (HuggingFace)   — 6,906 high-quality pairs (deduped vs BigVul)
-  - SecurityEval (GitHub)      — 130 Python snippets
-  - Juliet Test Suite subset   — ~3K Java/C/C++ samples
-  - CVE/NVD JSON dump (2020-2026) — descriptions for synthetic generation
-  - GitHub Security Advisories via gh-advisory-database
-  - OWASP Benchmark (Java)     — held out for evaluation only
+Core sources (Tier 1):
+  - BigVul      (Mendeley Data)           — 3,754 CVEs, C/C++ function-level
+  - Devign      (HuggingFace)             — 27,318 C functions
+  - PrimeVul    (HuggingFace)             — 6,906 high-quality pairs
+  - SecurityEval (GitHub)                 — 130 Python snippets
+  - CVEfixes    (HuggingFace, 59 GB)      — 138,974 paired vuln+patch
+  - CrossVul    (HuggingFace, 3 langs)    — 5,131 CVEs, 21 languages
+
+Expansion sources (Tier 2, June 2026):
+  - MoreFixes   (HuggingFace)             — 26,617 CVEs with fixing commits
+  - SynCVE      (HuggingFace)             — 134K CVEs, 72K with patches
+  - PurpleLlama (HuggingFace, Meta)       — AI security evaluation
+  - SecurityEval2 (GitHub)                — 1,809 Python vuln samples
+  - DataDog Malicious Packages (GitHub)   — 28K supply chain attacks
+  - OSS-Fuzz    (GitHub, Google)          — 6,100+ real bugs
+  - MegaVul     (HuggingFace, GPL eval)   — C/C++ vulns (eval only)
+  - OWASP LLM   (GitHub)                  — AI security test suite
+  - Juliet Test Suite (GitHub)            — 120K+ synthetic tests
+  - Garak       (pip install)             — NVIDIA LLM vuln probes
 
 Usage:
     python v2/dataset/download.py --out v2/inputs/datasets/raw
@@ -30,6 +40,10 @@ from pathlib import Path
 from typing import Iterable
 
 RAW = Path("v2/inputs/datasets/raw")
+
+PIP_PACKAGES = {
+    "garak": "garak",
+}
 
 
 # ---------- source registry ----------
@@ -91,6 +105,52 @@ SOURCES = {
         "repo_id": "xin1997/crossvul-python_all_only_input",
         "revision": "main",
     },
+    # --- Phase B Expansion (May 2026) — language balance + CWE gaps ---
+    "morefixes": {
+        "kind": "hf_dataset",
+        "repo_id": "JafarAkhondali/morefixes",
+        "revision": "main",
+    },
+    "purplellama": {
+        "kind": "hf_dataset",
+        "repo_id": "meta-llama/PurpleLlama_CyberSecEval",
+        "revision": "main",
+    },
+    "syncve": {
+        "kind": "hf_dataset",
+        "repo_id": "Hareshlab/SynCVE",
+        "revision": "main",
+    },
+    "megavul": {
+        "kind": "hf_dataset",
+        "repo_id": "CyberForce/MegaVul",
+        "revision": "main",
+    },
+    "datadog": {
+        "kind": "git",
+        "url": "https://github.com/DataDog/malicious-software-packages-dataset.git",
+        "subdir": "",
+    },
+    "securityeval2": {
+        "kind": "git",
+        "url": "https://github.com/fsoft-ai-hub/SecurityEval2.git",
+        "subdir": "",
+    },
+    "ossfuzz": {
+        "kind": "git",
+        "url": "https://github.com/google/oss-fuzz.git",
+        "subdir": "",
+    },
+    "garak": {
+        "kind": "pip",
+        "package": "garak",
+        "extra": "",
+    },
+    "owasp_llm": {
+        "kind": "git",
+        "url": "https://github.com/OWASP/www-project-top-10-for-llm-applications.git",
+        "subdir": "",
+    },
 }
 
 
@@ -140,6 +200,11 @@ def http_download(url: str, out: Path) -> None:
 
 
 # ---------- main ----------
+def pip_install(pkg: str) -> None:
+    log(f"pip install {pkg}")
+    subprocess.run([sys.executable, "-m", "pip", "install", pkg], check=True)
+
+
 def download_all(out_root: Path, only: Iterable[str] | None = None) -> None:
     safe_mkdir(out_root)
     keys = list(SOURCES.keys()) if only is None else list(only)
@@ -154,6 +219,8 @@ def download_all(out_root: Path, only: Iterable[str] | None = None) -> None:
                 hf_snapshot(spec["repo_id"], out, spec.get("revision", "main"), spec.get("config"))
             elif spec["kind"] == "git":
                 git_clone(spec["url"], out)
+            elif spec["kind"] == "pip":
+                pip_install(spec["package"])
             else:
                 log(f"unknown kind: {spec['kind']}")
         except Exception as e:  # noqa: BLE001
