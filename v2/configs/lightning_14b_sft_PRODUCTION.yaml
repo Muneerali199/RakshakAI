@@ -18,18 +18,7 @@ datasets:
     path: v2/inputs/datasets/axolotl/train_87k_with_reasoning.jsonl
     split: train
 
-eval_datasets:
-  - type: chat_template
-    chat_template: chatml
-    field_messages: messages
-    path: v2/inputs/datasets/axolotl/val_cleaned.jsonl
-    split: val
-
-# Evaluation settings
-eval_sample_max_num: 500  # Use 500 samples for thorough validation
-eval_steps: 2000           # Eval every 2000 steps (~8 times per epoch)
 eval_strategy: "no"        # Skip eval to maximize training budget
-eval_sample_packing: false # Disable for accurate val loss
 
 # Training hyperparameters
 learning_rate: 1.5e-4
