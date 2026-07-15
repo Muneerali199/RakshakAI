@@ -425,15 +425,33 @@ module.exports = { scanProject, scanFile, collectSourceFiles, getLang, LANGS };
 if (require.main === module) {
   const target = process.argv[2] || ".";
   console.log(`Scanning ${target}...`);
-  const result = scanProject(target);
-  console.log(`\nFiles scanned: ${result.filesScanned}`);
-  console.log(`Files with issues: ${result.filesWithIssues}`);
-  console.log(`Total issues: ${result.totalIssues}`);
-  console.log(`By severity:`, result.bySeverity);
-  for (const r of result.results) {
-    console.log(`\n${r.file}:`);
-    for (const issue of r.issues) {
-      console.log(`  L${issue.line} [${issue.severity}] ${issue.cweId} — ${issue.message}`);
+
+  if (fs.existsSync(target) && fs.statSync(target).isFile()) {
+    const issues = scanFile(target);
+    const file = path.basename(target);
+    console.log(`\nFiles scanned: ${issues.length > 0 ? 1 : 0}`);
+    console.log(`Files with issues: ${issues.length > 0 ? 1 : 0}`);
+    console.log(`Total issues: ${issues.length}`);
+    const bySeverity = {};
+    for (const issue of issues) {
+      bySeverity[issue.severity] = (bySeverity[issue.severity] || 0) + 1;
+    }
+    console.log(`By severity:`, bySeverity);
+    for (const issue of issues) {
+      console.log(`\n  ${file}:`);
+      console.log(`    L${issue.line} [${issue.severity}] ${issue.cweId} — ${issue.message}`);
+    }
+  } else {
+    const result = scanProject(target);
+    console.log(`\nFiles scanned: ${result.filesScanned}`);
+    console.log(`Files with issues: ${result.filesWithIssues}`);
+    console.log(`Total issues: ${result.totalIssues}`);
+    console.log(`By severity:`, result.bySeverity);
+    for (const r of result.results) {
+      console.log(`\n${r.file}:`);
+      for (const issue of r.issues) {
+        console.log(`  L${issue.line} [${issue.severity}] ${issue.cweId} — ${issue.message}`);
+      }
     }
   }
 }
