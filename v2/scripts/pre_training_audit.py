@@ -117,14 +117,14 @@ try:
     import yaml
     
     configs_to_check = {
-        "v2/configs/lightning_14b_sft_v2_FIXED.yaml": {
-            "expected_train": "train_87k_with_reasoning.jsonl",  # SHOULD USE REASONING!
+        "v2/configs/lightning_14b_sft_PRODUCTION.yaml": {
+            "expected_train": "train_87k_with_reasoning.jsonl",
             "expected_val": "val_cleaned.jsonl",
             "expected_lr": 1.5e-4,
             "expected_batch": 8,
         },
-        "v2/configs/lightning_14b_dpo_v2_FIXED.yaml": {
-            "expected_train": "dpo_train.jsonl",
+        "v2/configs/lightning_14b_dpo_PRODUCTION.yaml": {
+            "expected_train": "dpo_train_processed.jsonl",
             "expected_lr": 1e-5,
             "expected_seq_len": 4096,
         }
@@ -142,7 +142,8 @@ try:
         
         # Check dataset paths
         if "datasets" in cfg:
-            train_path = cfg["datasets"][0].get("path", "")
+            ds = cfg["datasets"][0]
+            train_path = ds.get("path", ds.get("data_files", [None])[0] if ds.get("data_files") else None) or ""
             actual_file = os.path.basename(train_path)
             expected_file = expectations.get("expected_train")
             
@@ -152,7 +153,7 @@ try:
                 success(f"  Dataset: {actual_file}")
             
             # Check if file exists
-            if not os.path.exists(train_path):
+            if train_path and not os.path.exists(train_path):
                 error(f"  Dataset file doesn't exist: {train_path}")
         
         # Check validation dataset
