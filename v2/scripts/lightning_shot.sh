@@ -15,11 +15,11 @@ fi
 
 RUNNER="_remote_run.sh"
 if [ "$MODEL_SIZE" = "14b" ]; then
-    RUNNER="_remote_run_14b_FIXED.sh"
-    echo "[*] 14B mode (FIXED) — recommended GPU: A100 80GB (2.50 cr/hr, ~5.1h = ~$12.75)"
+    RUNNER="train_production.sh"
+    echo "[*] 14B PRODUCTION mode — A100 80GB ($2.50/hr, ~5.2h = ~$13.00)"
+    echo "[*] Dataset: 259K (250K SFT + 9K DeepSeek reasoning traces)"
 else
-    RUNNER="_remote_run_FIXED.sh"
-    echo "[*] 7B mode (FIXED) — recommended GPU: H100 (3.50 cr/hr)"
+    echo "[*] 7B mode — H100 ($3.50/hr)"
 fi
 
 echo "[1/4] Copying dataset + runner..."
