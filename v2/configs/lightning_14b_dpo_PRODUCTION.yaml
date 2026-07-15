@@ -10,10 +10,12 @@ dataset_prepared_path: v2/prepared/dpo_14b
 
 datasets:
   - type: dpo
+    ds_type: json
     chat_template: chatml
     field_chosen: chosen
     field_rejected: rejected
-    path: v2/inputs/datasets/axolotl/dpo_train.jsonl
+    data_files:
+      - v2/inputs/datasets/axolotl/dpo_train.jsonl
     split: train
 
 # Evaluation
