@@ -39,8 +39,8 @@ lr_scheduler: cosine
 optimizer: adamw_8bit
 
 # Batch settings
-micro_batch_size: 2
-gradient_accumulation_steps: 8  # Effective batch = 16
+micro_batch_size: 1
+gradient_accumulation_steps: 16  # Effective batch = 16
 
 # Memory optimization
 load_in_4bit: true
