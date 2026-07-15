@@ -21,8 +21,14 @@ else
     echo "[*] 7B mode — recommended GPU: H100 (3.50 cr/hr, ~2.8h = ~$9.80)"
 fi
 
-echo "[1/4] Copying dataset (384MB) + runner..."
-scp -o StrictHostKeyChecking=no /tmp/axolotl_dataset.tar.gz "$SSH_HOST:~/"
+echo "[1/4] Copying dataset + runner..."
+# Tarball is optional — remote runner falls back to HF download if missing
+if [ -f /tmp/axolotl_dataset.tar.gz ]; then
+    echo "  Dataset tarball found (~270MB), copying..."
+    scp -o StrictHostKeyChecking=no /tmp/axolotl_dataset.tar.gz "$SSH_HOST:~/"
+else
+    echo "  No tarball — remote will download from HuggingFace"
+fi
 scp -o StrictHostKeyChecking=no "v2/scripts/$RUNNER" "$SSH_HOST:~/"
 
 echo "[2/4] Executing remote setup → SFT → DPO..."
