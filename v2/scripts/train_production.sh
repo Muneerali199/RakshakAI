@@ -19,42 +19,47 @@ echo "[2/7] Installing dependencies..."
 cd ~/RakshakAI
 bash v2/scripts/install_dependencies.sh 2>&1 | tail -15
 
-echo "[3/7] Downloading datasets from HuggingFace..."
+echo "[3/7] Loading datasets..."
 mkdir -p ~/RakshakAI/v2/inputs/datasets/axolotl ~/RakshakAI/v2/model ~/RakshakAI/v2/prepared
 
-pip install --break-system-packages huggingface-hub 2>&1 | tail -1
-python3 << 'EOF'
+DST=~/RakshakAI/v2/inputs/datasets/axolotl
+
+if [ -f ~/axolotl_dataset.tar.gz ]; then
+    echo "  Found tarball — extracting..."
+    tar -xzf ~/axolotl_dataset.tar.gz -C "$DST"
+    for f in train_87k_with_reasoning.jsonl val_cleaned.jsonl dpo_train.jsonl; do
+        if [ -f "$DST/$f" ]; then
+            sz=$(du -h "$DST/$f" | cut -f1)
+            echo "  ✓ $f ($sz)"
+        fi
+    done
+else
+    echo "  No tarball — downloading from HuggingFace..."
+    pip install --break-system-packages huggingface-hub 2>&1 | tail -1
+    python3 << 'EOF'
 from huggingface_hub import hf_hub_download
-import os
-import shutil
+import os, shutil
 
 dst = os.path.expanduser('~/RakshakAI/v2/inputs/datasets/axolotl')
-
-# Critical files (MUST exist)
 required_files = [
-    'train_87k_with_reasoning.jsonl',  # 259K with reasoning!
-    'val_cleaned.jsonl',                # 5K clean validation
-    'dpo_train.jsonl',                  # 7K DPO pairs
+    'train_87k_with_reasoning.jsonl',
+    'val_cleaned.jsonl',
+    'dpo_train.jsonl',
 ]
-
 for filename in required_files:
     print(f"Downloading {filename}...")
     try:
-        path = hf_hub_download(
-            'Muneerali199/rakshak-cwe-v3-data',
-            filename,
-            repo_type='dataset'
-        )
+        path = hf_hub_download('Muneerali199/rakshak-cwe-v3-data', filename, repo_type='dataset')
         shutil.copy(path, f'{dst}/{filename}')
         size_mb = os.path.getsize(f'{dst}/{filename}') / 1024 / 1024
         lines = sum(1 for _ in open(f'{dst}/{filename}'))
         print(f"  ✓ {filename}: {lines:,} lines ({size_mb:.0f}MB)")
     except Exception as e:
-        print(f"  ✗ FAILED to download {filename}: {e}")
+        print(f"  ✗ FAILED: {e}")
         exit(1)
-
-print("\n✅ All datasets downloaded successfully")
+print("\n✅ All datasets downloaded")
 EOF
+fi
 
 echo "[4/7] Validating setup..."
 python3 v2/scripts/pre_training_audit.py 2>&1 | tail -50

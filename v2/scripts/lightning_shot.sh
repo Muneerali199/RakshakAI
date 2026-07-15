@@ -25,10 +25,10 @@ fi
 echo "[1/4] Copying dataset + runner..."
 # Tarball is optional — remote runner falls back to HF download if missing
 if [ -f /tmp/axolotl_dataset.tar.gz ]; then
-    echo "  Dataset tarball found (~270MB), copying..."
+    echo "  Dataset tarball found (266MB — includes reasoning traces), copying..."
     scp -o StrictHostKeyChecking=no /tmp/axolotl_dataset.tar.gz "$SSH_HOST:~/"
 else
-    echo "  No tarball — remote will download from HuggingFace"
+    echo "  No tarball — remote will download from HuggingFace (1.2GB)"
 fi
 scp -o StrictHostKeyChecking=no "v2/scripts/$RUNNER" "$SSH_HOST:~/"
 
