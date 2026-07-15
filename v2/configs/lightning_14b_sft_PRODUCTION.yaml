@@ -28,12 +28,13 @@ eval_datasets:
 # Evaluation settings
 eval_sample_max_num: 500  # Use 500 samples for thorough validation
 eval_steps: 2000           # Eval every 2000 steps (~8 times per epoch)
-eval_strategy: steps
+eval_strategy: "no"        # Skip eval to maximize training budget
 eval_sample_packing: false # Disable for accurate val loss
 
 # Training hyperparameters
 learning_rate: 1.5e-4
 num_epochs: 1
+max_steps: 750  # Fit within $12 budget at ~5.5h (23s/step)
 warmup_ratio: 0.03
 lr_scheduler: cosine
 optimizer: paged_adamw_8bit
@@ -80,7 +81,7 @@ train_on_inputs: false  # Don't compute loss on prompts
 # Checkpoint settings
 output_dir: v2/model/sft_14b
 save_strategy: steps
-save_steps: 2000
+save_steps: 375  # Save mid-training (@375) and final (@750)
 save_total_limit: 3  # Keep best 3 checkpoints
 
 # Early stopping disabled (causes assertion errors with axolotl 0.6.0 / TRL)
