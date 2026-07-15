@@ -13,18 +13,32 @@
 
 ## One Command to Train
 
-### Option A: Fast — 7B on A10G (~$2)
+### Option A: Fast — 7B on Lightning ($9.80, fits 12 credits)
 
 ```bash
-export HF_TOKEN="hf_..."
-modal run v2/modal_v3_train.py::train --detach
+# 1. Start H100 instance on Lightning.ai
+# 2. Run:
+bash v2/scripts/lightning_shot.sh s_abc123@ssh.lightning.ai
 ```
 - Base: Qwen2.5-Coder-7B-Instruct
-- GPU: A10G 24GB
-- Time: ~2 hours
-- Cost: ~$2
+- GPU: H100 (3.50 cr/hr)
+- SFT (250K) + DPO (7K): ~2.8h
+- Cost after pipeline: ~$9.80 ($2.20 left)
 
-### Option B: Strong — 14B on A100 (~$15) ★ RECOMMENDED
+### Option B: 14B on Lightning ($10.75, fits 14 credits) ★ RECOMMENDED
+
+```bash
+# 1. Start A100 80GB instance on Lightning.ai (2.50 cr/hr)
+# 2. Run:
+bash v2/scripts/lightning_shot.sh s_abc123@ssh.lightning.ai 14b
+```
+- Base: Qwen2.5-Coder-14B-Instruct
+- GPU: A100 80GB (2.50 cr/hr)
+- SFT (250K) + DPO (7K): ~4.3h
+- Cost: ~$10.75 ($3.25 left for eval)
+- **Likely beats GPT-4o on CWE classification**
+
+### Option C: Cloud — 14B on Modal A100 (~$15)
 
 ```bash
 export HF_TOKEN="hf_..."
@@ -34,20 +48,6 @@ modal run v2/modal_v3_train.py::train_14b --detach
 - GPU: A100 80GB
 - Time: ~4 hours
 - Cost: ~$15
-- **Likely beats GPT-4o on CWE classification**
-
-### Option C: Maximum — 14B on H100 with 4K context (~$30)
-
-```bash
-export HF_TOKEN="hf_..."
-modal run v2/modal_v3_train.py::train_14b_long --detach
-```
-- Base: Qwen2.5-Coder-14B-Instruct
-- GPU: H100
-- Steps: 4000 (more training)
-- Context: 4096 tokens (longer code)
-- Time: ~6 hours
-- Cost: ~$30
 
 ## Compare Against Big Models
 
