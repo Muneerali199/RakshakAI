@@ -9,7 +9,8 @@ dataloader_num_workers: 2
 dataset_prepared_path: v2/prepared/dpo_14b
 
 datasets:
-  - ds_type: json
+  - path: v2/inputs/datasets/axolotl/dpo_train_processed.jsonl
+    ds_type: json
     data_files:
       - v2/inputs/datasets/axolotl/dpo_train_processed.jsonl
     split: train
