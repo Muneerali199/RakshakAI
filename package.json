@@ -1,6 +1,6 @@
 {
   "name": "rakshakai",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "RakshakAI — AI-powered security scanner & chat. Scan 20+ languages, 150+ vulnerability patterns, 65+ AI models across 9 providers, multi-agent swarm, offline regex engine.",
   "license": "Apache-2.0",
   "author": "RakshakAI",
