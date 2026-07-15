@@ -2,7 +2,7 @@
 # RakshakAI 14B Training - PRODUCTION VERSION
 # Uses 259K samples WITH REASONING TRACES
 # All critical issues fixed
-set -e
+set -eo pipefail
 cd ~
 
 # Ensure pip is in PATH (Lightning.ai puts it in miniconda3)
