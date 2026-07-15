@@ -33,6 +33,9 @@ gradient_accumulation_steps: 1  # Effective batch = 8
 
 # Memory optimization
 load_in_4bit: true
+bnb_4bit_compute_dtype: bfloat16
+bnb_4bit_use_double_quant: true
+bnb_4bit_quant_type: nf4
 gradient_checkpointing: true
 flash_attention: false
 bf16: true

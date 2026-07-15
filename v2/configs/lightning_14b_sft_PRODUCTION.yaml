@@ -39,11 +39,14 @@ lr_scheduler: cosine
 optimizer: adamw_8bit
 
 # Batch settings
-micro_batch_size: 1
-gradient_accumulation_steps: 16  # Effective batch = 16
+micro_batch_size: 2
+gradient_accumulation_steps: 8  # Effective batch = 16
 
-# Memory optimization
+# Memory optimization  
 load_in_4bit: true
+bnb_4bit_compute_dtype: bfloat16
+bnb_4bit_use_double_quant: true
+bnb_4bit_quant_type: nf4
 gradient_checkpointing: true
 flash_attention: false
 bf16: true
@@ -69,7 +72,7 @@ lora_modules_to_save:
   - lm_head
 
 # Data settings
-sequence_len: 4096
+sequence_len: 2048
 sample_packing: true
 group_by_length: true
 train_on_inputs: false  # Don't compute loss on prompts
