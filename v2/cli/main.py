@@ -26,6 +26,11 @@ from v2.cli.display import show_swarm_results
 from v2.cli.prompts import get_explain_messages, get_fix_messages, get_system, get_scan_system
 from v2.cli.auth import auth_state, login_flow, fetch_user_info, AUTH_SERVER_HOST
 import v2.cli.memory as memory
+from v2.cli.project_context import build_project_context, load_rakshakai_md, find_project_root
+from v2.cli.thinking import ThinkingDisplay, ThinkingPanel
+from v2.cli.agentic_tools import ReadTool, EditTool, GlobTool, GrepTool, BashTool, build_openai_tools_v2, dispatch as agentic_dispatch
+from v2.cli.permissions import approval, patch_tools_with_approval
+patch_tools_with_approval()
 
 HISTORY_FILE = os.path.expanduser("~/.rakshak_history")
 
@@ -64,6 +69,8 @@ class ModelCompleter(Completer):
         "/agent", "/swarm", "/skills",
         "/login", "/logout", "/whoami",
         "/def", "/refs", "/hover", "/rename",  # LSP commands
+        "/context", "/resume", "/fork", "/rakshakai.md",
+        "/permissions", "/plan",  # Claude Code-inspired
     ]
 
     def get_completions(self, document, complete_event):
@@ -210,17 +217,16 @@ class RakshakREPL:
 
         from v2.cli.scanner import collect_source_files
         cwd = self.current_dir
-        parts = [f"Working directory: {cwd}"]
-        # Git info
+
+        # Use the enhanced project context builder with RAKSHAKAI.md
         try:
-            from v2.cli.git_scanner import get_repo
-            repo = get_repo(cwd)
-            if repo:
-                branch = repo.active_branch.name if not repo.head.is_detached else "detached"
-                parts.append(f"Git branch: {branch}")
-                parts.append(f"Git repo: {repo.remotes.origin.url if repo.remotes else 'local'}")
+            ctx = build_project_context(cwd)
         except Exception:
-            pass
+            ctx = f"Working directory: {cwd}"
+
+        parts = [ctx] if ctx else [f"Working directory: {cwd}"]
+        parts.append("")
+
         # File stats
         try:
             files = collect_source_files(cwd, max_files=200)
@@ -231,7 +237,6 @@ class RakshakREPL:
                     exts[ext] = exts.get(ext, 0) + 1
                 lang_summary = ", ".join(f"{ext}: {n}" for ext, n in sorted(exts.items(), key=lambda x: -x[1])[:8])
                 parts.append(f"Source files: {len(files)} ({lang_summary})")
-                parts.append("Use /batch to scan all files, /scan <file> for one file")
         except Exception:
             pass
 
@@ -650,6 +655,150 @@ class RakshakREPL:
         )
         return True
     
+    def _handle_context(self, args: str) -> bool:
+        """Show context usage visualization — inspired by Claude Code's /context."""
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich import box
+        import math
+
+        context = self._build_project_context()
+        msg_count = len(self.messages)
+        context_tokens = len(context) // 4
+        msg_tokens = sum(len(m.get("content", "")) // 4 for m in self.messages)
+        total = context_tokens + msg_tokens
+        budget = 8000
+
+        table = Table(box=box.SIMPLE, padding=(0, 2))
+        table.add_column("Component", style="cyan")
+        table.add_column("Tokens", justify="right")
+        table.add_column("Usage", ratio=1)
+
+        for label, tokens in [
+            ("Project Context (RAKSHAKAI.md)", context_tokens),
+            (f"Conversation ({msg_count} messages)", msg_tokens),
+            ("Available", max(0, budget - total)),
+        ]:
+            pct = tokens / budget if budget > 0 else 0
+            bar_len = 20
+            filled = max(0, min(bar_len, int(pct * bar_len)))
+            bar = "█" * filled + "░" * (bar_len - filled)
+            color = "green" if pct < 0.5 else "yellow" if pct < 0.8 else "red"
+            table.add_row(label, str(tokens), f"[{color}]{bar}[/] [{pct*100:.0f}%]")
+
+        console.print(Panel(table, title="[bold]Context Usage[/]", border_style="cyan"))
+        console.print(f"[dim]Model: {MODEL_LABELS.get(registry.active, registry.active)}[/]")
+
+        # Show RAKSHAKAI.md info
+        root = find_project_root(self.current_dir)
+        ctx_path = root / "RAKSHAKAI.md"
+        if ctx_path.exists():
+            console.print(f"[dim]RAKSHAKAI.md: {ctx_path}[/]")
+        else:
+            console.print(f"[dim]RAKSHAKAI.md: not found — create one for project preferences[/]")
+
+        return True
+
+    def _handle_permissions(self, args: str) -> bool:
+        """Set permission mode: always_ask, accept_edits, plan, auto."""
+        mode = args.strip().lower()
+        if not mode:
+            from rich.table import Table
+            from rich import box
+            table = Table(box=box.SIMPLE, padding=(0, 2))
+            table.add_column("Mode", style="cyan")
+            table.add_column("Description", style="dim")
+            table.add_column("Active", justify="center")
+            for m in approval.MODES:
+                active = "✓" if m == approval.mode else ""
+                desc = {
+                    "always_ask": "Prompt for every file change",
+                    "accept_edits": "Auto-approve edits, ask for writes",
+                    "plan": "Show changes only, never write",
+                    "auto": "Auto-approve all operations",
+                }[m]
+                table.add_row(m, desc, active)
+            console.print(table)
+            console.print(f"\n[dim]Usage: /permissions [{'|'.join(approval.MODES)}][/]")
+            return True
+        if mode in approval.MODES:
+            approval.set_mode(mode)
+            show_success(f"Permission mode: {mode}")
+        else:
+            show_error(f"Invalid mode: {mode}. Options: {', '.join(approval.MODES)}")
+        return True
+
+    def _handle_plan(self, args: str) -> bool:
+        """Enter plan mode — see what changes would be made without applying them."""
+        was = approval.mode
+        approval.set_mode("plan")
+        if args.strip():
+            # Run the request in plan mode
+            self.messages.append({"role": "user", "content": args.strip()})
+            context = self._build_project_context()
+            response = self._chat_with_react(args.strip(), context)
+        else:
+            show_success("Plan mode active — all changes are previewed, not applied")
+            console.print(f"[dim]Use /permissions always_ask to return to normal mode[/]")
+        return True
+
+    def _handle_rakshakai_md(self, args: str) -> bool:
+        """Create or show RAKSHAKAI.md project context file."""
+        root = find_project_root(self.current_dir)
+        ctx_path = root / "RAKSHAKAI.md"
+
+        if args.strip() == "create" or not ctx_path.exists():
+            if ctx_path.exists():
+                return show_error("RAKSHAKAI.md already exists")
+            content = load_rakshakai_md(str(root))
+            ctx_path.write_text(content, encoding="utf-8")
+            show_success(f"Created {ctx_path}")
+            console.print("[dim]Edit this file to set project rules and preferences.[/]")
+        else:
+            from rich.syntax import Syntax
+            content = ctx_path.read_text(encoding="utf-8", errors="replace")
+            syntax = Syntax(content, "markdown", theme="monokai", line_numbers=True)
+            console.print(Panel(syntax, title=f"[bold]RAKSHAKAI.md[/]", border_style="cyan"))
+
+        return True
+
+    def _handle_resume(self, args: str) -> bool:
+        """Show recent sessions for resuming."""
+        import sqlite3
+        from v2.cli.memory import _get_db, DB_PATH
+        try:
+            conn = _get_db()
+            rows = conn.execute("SELECT id, started_at, model, dir FROM sessions ORDER BY id DESC LIMIT 10").fetchall()
+            if not rows:
+                return show_status("No previous sessions found.", "yellow")
+            from rich.table import Table
+            from rich import box
+            table = Table(box=box.SIMPLE, padding=(0, 2))
+            table.add_column("ID", style="cyan")
+            table.add_column("Date", style="dim")
+            table.add_column("Model")
+            table.add_column("Dir", style="dim")
+            for r in rows:
+                table.add_row(str(r["id"]), (r["started_at"] or "")[5:19], r["model"] or "?", (r["dir"] or "")[-30:])
+            console.print(table)
+            console.print(f"\n[dim]Start a new session to continue working.[/]")
+        except Exception as e:
+            show_error(f"Error: {e}")
+        return True
+
+    def _handle_fork(self, args: str) -> bool:
+        """Fork conversation to try a different direction."""
+        outfile = f"session_fork_{int(time.time())}.json"
+        with open(outfile, "w") as f:
+            json.dump({
+                "session_id": self._session_id,
+                "messages": self.messages,
+                "forked_from": self._session_id,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }, f)
+        show_success(f"Session forked: {outfile}")
+        return True
+
     def _handle_share(self, args: str) -> bool:
         """Share current session via URL or export to file."""
         from v2.cli.session_share import upload_session, save_session_local, export_for_github
@@ -1177,6 +1326,12 @@ class RakshakREPL:
                     "/confirm": self._handle_confirm,
                     "/dismiss": self._handle_dismiss,
                     "/cost": self._handle_cost,
+                    "/context": self._handle_context,
+                    "/permissions": self._handle_permissions,
+                    "/plan": self._handle_plan,
+                    "/rakshakai.md": self._handle_rakshakai_md,
+                    "/resume": self._handle_resume,
+                    "/fork": self._handle_fork,
                     "/clear": lambda a: (self.messages.clear(), show_status("Conversation context cleared", "green")),
                     "/session": self._handle_session,
                     "/login": self._handle_login,
@@ -1214,6 +1369,11 @@ class RakshakREPL:
 
         system = get_system(registry.active) + "\n\n" + context
         full = [{"role": "system", "content": system}] + self.messages[-30:]
+
+        # Add RAKSHAKAI.md project context with instructions
+        rakshakai_ctx = load_rakshakai_md(self.current_dir)
+        if rakshakai_ctx and "RakshakAI" not in system:
+            full.insert(0, {"role": "system", "content": rakshakai_ctx})
         # Trim to fit token budget (leaves room for response)
         messages = trim_messages(full, max_tokens=5000)
         user_msg = {"role": "user", "content": text}
@@ -1232,10 +1392,12 @@ class RakshakREPL:
         import json
         from v2.cli.tools import build_openai_tools, dispatch_tool_call
 
-        tools = build_openai_tools()
+            # Use enhanced agentic tools (Claude Code-style)
+        tools = build_openai_tools_v2()
         full_messages = messages + [user_msg]
         t_start = time.time()
         max_rounds = 10
+        td = ThinkingDisplay(enabled=True)
 
         def _summarize(name: str, result: object) -> str:
             if result is None:
@@ -1280,9 +1442,10 @@ class RakshakREPL:
                 except json.JSONDecodeError:
                     args = {}
 
+                td.update(f"Using {name}: {str(args)[:60]}")
                 show_tool_call(name, args)
 
-                result = dispatch_tool_call(name, args)
+                result = agentic_dispatch(name, args)
 
                 result_str = _summarize(name, result)
                 show_tool_result(result_str)

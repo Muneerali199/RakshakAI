@@ -30,7 +30,9 @@ term_width = shutil.get_terminal_size().columns
 
 MODEL_LABELS = {
     "ollama": "Ollama Local",
-    "rakshak": "Rakshak",
+    "rakshak": "RakshakAI v3 (legacy)",
+    "rakshak-14b": "RakshakAI 14B (Modal)",
+    "rakshak-14b-groq": "RakshakAI 14B (via Groq)",
     "deepseek": "DeepSeek V4 Pro",
     "llama": "Llama 3.1 70B",
     "mistral-nvidia": "Mistral Large",

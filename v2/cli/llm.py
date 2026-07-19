@@ -103,8 +103,10 @@ def _build_registry():
     # ── Local ──
     models["ollama"] = LLMConfig(name="Ollama Local", provider="ollama", model="llama3.2", base_url=OLLAMA_URL, api_key="")
 
-    # ── Rakshak ──
-    models["rakshak"] = LLMConfig(name="RakshakAI v3", provider="modal", model="Muneerali199/rakshak-cwe-v3", base_url=RAKSHAKAI_INFER_URL, api_key=HF_TOKEN, supports_streaming=False, supports_tools=False)
+    # ── RakshakAI ──
+    models["rakshak"] = LLMConfig(name="RakshakAI v3 (legacy)", provider="modal", model="Muneerali199/rakshak-cwe-v3", base_url=RAKSHAKAI_INFER_URL, api_key=HF_TOKEN, supports_streaming=False, supports_tools=False)
+    models["rakshak-14b"] = LLMConfig(name="RakshakAI 14B (Modal)", provider="modal", model="Muneerali199/rakshak-cwe-14b-sft-step375", base_url="https://alimuneerali245--rakshak-api-rakshakmodel-analyze-endpoint.modal.run", api_key=HF_TOKEN, supports_streaming=False, supports_tools=False)
+    models["rakshak-14b-groq"] = LLMConfig(name="RakshakAI 14B (via Groq)", provider="groq", model="llama-3.3-70b-versatile", base_url=groq_base, api_key=GROQ_KEY, supports_streaming=True, supports_tools=True)
 
     # ── NVIDIA NIM ──
     models["deepseek"] = LLMConfig(name="DeepSeek V4 Pro", provider="nvidia", model="deepseek-ai/deepseek-v4-pro", base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDIA_KEY)
