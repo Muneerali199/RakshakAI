@@ -645,14 +645,127 @@ class RakshakREPL:
         return True
 
     def _handle_session(self, args: str) -> bool:
+        """Manage sessions: show current, list all, share, switch, save."""
+        import sqlite3
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich import box
+
+        arg = args.strip().lower()
         elapsed = time.time() - self.start_time
-        console.print(
-            f"  dir: {self.current_dir}\n"
-            f"  model: {MODEL_LABELS.get(registry.active, registry.active)}\n"
-            f"  messages: {len(self.messages)}\n"
-            f"  duration: {elapsed:.0f}s\n"
-            f"  session: {self._session_id}"
-        )
+
+        # ── /session list — list all recent sessions ──
+        if arg == "list" or arg == "ls":
+            try:
+                from v2.cli.memory import _get_db
+                conn = _get_db()
+                rows = conn.execute("""
+                    SELECT s.id, s.started_at, s.model, s.dir,
+                           COUNT(a.id) as analyses
+                    FROM sessions s
+                    LEFT JOIN analyses a ON a.session_id = s.id
+                    GROUP BY s.id ORDER BY s.id DESC LIMIT 20
+                """).fetchall()
+
+                if not rows:
+                    return show_status("No previous sessions.", "yellow")
+
+                table = Table(box=box.ROUNDED, title="[bold]Session History[/]",
+                              border_style="cyan", header_style="bold cyan")
+                table.add_column("ID", style="cyan", width=6)
+                table.add_column("Date", style="dim", width=16)
+                table.add_column("Model", width=20)
+                table.add_column("Dir", style="dim", width=30)
+                table.add_column("Scans", justify="right", width=6)
+
+                for r in rows:
+                    table.add_row(
+                        str(r["id"]),
+                        (r["started_at"] or "")[5:19] or "?",
+                        (r["model"] or "?")[:20],
+                        (r["dir"] or "?")[-30:],
+                        str(r["analyses"] or 0),
+                    )
+                console.print(table)
+                console.print(f"  [dim]Use /session <id> to switch to a session[/]")
+            except Exception as e:
+                show_error(f"Error: {e}")
+            return True
+
+        # ── /session share — share current session ──
+        if arg == "share" or arg.startswith("share "):
+            from v2.cli.session_share import upload_session, save_session_local
+            show_status("Uploading session...", "cyan")
+            url = upload_session(self._session_id)
+            if url:
+                show_success(f"Session shared: {url}")
+                console.print(f"  [dim]Share this URL for anyone to view the results[/]")
+            else:
+                show_status("Upload failed. Saving locally...", "yellow")
+                fname = f"session_{self._session_id}.json"
+                if save_session_local(self._session_id, fname):
+                    show_success(f"Saved: {fname}")
+                    console.print(f"  [dim]Share this file with your team[/]")
+                else:
+                    show_error("Save failed")
+            return True
+
+        # ── /session save <filename> — save to file ──
+        if arg.startswith("save"):
+            parts = arg.split(maxsplit=1)
+            fname = parts[1] if len(parts) > 1 else f"session_{self._session_id}.json"
+            with open(fname, "w") as f:
+                json.dump({
+                    "session_id": self._session_id,
+                    "model": registry.active,
+                    "dir": self.current_dir,
+                    "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(self.start_time)),
+                    "messages": self.messages,
+                }, f, indent=2)
+            show_success(f"Saved: {fname}")
+            return True
+
+        # ── /session export — export as markdown report ──
+        if arg == "export":
+            from v2.cli.session_share import export_for_github
+            md = export_for_github(self._session_id)
+            fname = f"session_{self._session_id}.md"
+            with open(fname, "w") as f:
+                f.write(md)
+            show_success(f"Exported: {fname}")
+            return True
+
+        # ── /session <id> — switch to a session ──
+        if arg.isdigit():
+            session_id = int(arg)
+            try:
+                from v2.cli.memory import _get_db
+                conn = _get_db()
+                row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+                if row:
+                    show_status(f"Switched to session {session_id} ({row['started_at']})", "green")
+                    console.print(f"  [dim]Model: {row['model']} | Dir: {row['dir']}[/]")
+                    console.print(f"  [dim]Start a new query to continue in this session context.[/]")
+                    self._session_id = session_id
+                else:
+                    show_error(f"Session {session_id} not found")
+            except Exception as e:
+                show_error(f"Error: {e}")
+            return True
+
+        # ── default: show current session info ──
+        console.print(Panel(
+            f"  [cyan]Session:[/]   {self._session_id}\n"
+            f"  [cyan]Model:[/]     {MODEL_LABELS.get(registry.active, registry.active)}\n"
+            f"  [cyan]Dir:[/]       {self.current_dir}\n"
+            f"  [cyan]Messages:[/]  {len(self.messages)}\n"
+            f"  [cyan]Duration:[/]  {elapsed:.0f}s\n"
+            f"  [cyan]Scanned:[/]   {self.files_scanned} files\n"
+            f"  [cyan]Vulns:[/]     {self.vulnerabilities_found}",
+            title="[bold]Current Session[/]",
+            border_style="cyan",
+        ))
+        console.print(f"  [dim]Commands: /session list | /session <id> | /session share | /session save | /session export[/]")
         return True
     
     def _handle_context(self, args: str) -> bool:
