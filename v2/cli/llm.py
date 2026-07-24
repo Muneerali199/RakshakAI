@@ -103,6 +103,9 @@ def _build_registry():
     # ── Local ──
     models["ollama"] = LLMConfig(name="Ollama Local", provider="ollama", model="llama3.2", base_url=OLLAMA_URL, api_key="")
 
+    # ── Groq ──
+    groq_base = "https://api.groq.com/openai/v1/"
+
     # ── RakshakAI ──
     models["rakshak"] = LLMConfig(name="RakshakAI v3 (legacy)", provider="modal", model="Muneerali199/rakshak-cwe-v3", base_url=RAKSHAKAI_INFER_URL, api_key=HF_TOKEN, supports_streaming=False, supports_tools=False)
     models["rakshak-14b"] = LLMConfig(name="RakshakAI 14B (Modal)", provider="modal", model="Muneerali199/rakshak-cwe-14b-sft-step375", base_url="https://alimuneerali245--rakshak-api-rakshakmodel-analyze-endpoint.modal.run", api_key=HF_TOKEN, supports_streaming=False, supports_tools=False)
@@ -122,12 +125,22 @@ def _build_registry():
     models["nebius-mixtral"] = LLMConfig(name="Mixtral 8x22B", provider="nebius", model="mistralai/Mixtral-8x22B-Instruct-v0.1", base_url=nebius_base, api_key=NEBIUS_KEY)
     models["nebius-deepseek"] = LLMConfig(name="DeepSeek V2.5", provider="nebius", model="DeepSeek/DeepSeek-V2.5", base_url=nebius_base, api_key=NEBIUS_KEY)
 
-    # ── Fireworks AI ──
+    # ── Fireworks AI (200+ models available) ──
     fw_base = "https://api.fireworks.ai/inference/v1/"
+    models["fw-kimi-k2"] = LLMConfig(name="Kimi K2 Instruct", provider="fireworks", model="accounts/fireworks/models/kimi-k2-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-deepseek-v4-pro"] = LLMConfig(name="DeepSeek V4 Pro", provider="fireworks", model="accounts/fireworks/models/deepseek-v4-pro", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-deepseek-v4-flash"] = LLMConfig(name="DeepSeek V4 Flash", provider="fireworks", model="accounts/fireworks/models/deepseek-v4-flash", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-llama-3.3-70b"] = LLMConfig(name="Llama 3.3 70B", provider="fireworks", model="accounts/fireworks/models/llama-v3p3-70b-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
     models["fw-llama-70b"] = LLMConfig(name="Llama 3.1 70B", provider="fireworks", model="accounts/fireworks/models/llama-v3p1-70b-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
     models["fw-llama-8b"] = LLMConfig(name="Llama 3.1 8B", provider="fireworks", model="accounts/fireworks/models/llama-v3p1-8b-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
-    models["fw-mixtral"] = LLMConfig(name="Mixtral 8x22B", provider="fireworks", model="accounts/fireworks/models/mixtral-8x22b-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-qwen-3.5-122b"] = LLMConfig(name="Qwen 3.5 122B", provider="fireworks", model="accounts/fireworks/models/qwen3p5-122b-a10b", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-qwen-3.5-27b"] = LLMConfig(name="Qwen 3.5 27B", provider="fireworks", model="accounts/fireworks/models/qwen3p5-27b", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-qwen-3.6-plus"] = LLMConfig(name="Qwen 3.6 Plus", provider="fireworks", model="accounts/fireworks/models/qwen3p6-plus", base_url=fw_base, api_key=FIREWORKS_KEY)
     models["fw-qwen-72b"] = LLMConfig(name="Qwen 2.5 72B", provider="fireworks", model="accounts/fireworks/models/qwen2p5-72b-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-glm-5"] = LLMConfig(name="GLM-5", provider="fireworks", model="accounts/fireworks/models/glm-5", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-minimax-m3"] = LLMConfig(name="MiniMax M3", provider="fireworks", model="accounts/fireworks/models/minimax-m3", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-gemma-4-31b"] = LLMConfig(name="Gemma 4 31B", provider="fireworks", model="accounts/fireworks/models/gemma-4-31b-it", base_url=fw_base, api_key=FIREWORKS_KEY)
+    models["fw-mixtral"] = LLMConfig(name="Mixtral 8x22B", provider="fireworks", model="accounts/fireworks/models/mixtral-8x22b-instruct", base_url=fw_base, api_key=FIREWORKS_KEY)
     models["fw-deepseek-v3"] = LLMConfig(name="DeepSeek V3", provider="fireworks", model="accounts/fireworks/models/deepseek-v3", base_url=fw_base, api_key=FIREWORKS_KEY)
     models["fw-phi-4"] = LLMConfig(name="Phi-4 14B", provider="fireworks", model="accounts/fireworks/models/phi-4", base_url=fw_base, api_key=FIREWORKS_KEY)
 
@@ -140,8 +153,7 @@ def _build_registry():
     models["tg-mixtral"] = LLMConfig(name="Mixtral 8x22B", provider="together", model="mistralai/Mixtral-8x22B-Instruct-v0.1", base_url=together_base, api_key=TOGETHER_KEY)
 
     # ── Groq ──
-    groq_base = "https://api.groq.com/openai/v1/"
-    models["groq-llama-70b"] = LLMConfig(name="Llama 3.1 70B", provider="groq", model="llama-3.1-70b-versatile", base_url=groq_base, api_key=GROQ_KEY)
+    models["groq-llama-70b"] = LLMConfig(name="Llama 3.3 70B", provider="groq", model="llama-3.3-70b-versatile", base_url=groq_base, api_key=GROQ_KEY)
     models["groq-llama-8b"] = LLMConfig(name="Llama 3.1 8B", provider="groq", model="llama-3.1-8b-instant", base_url=groq_base, api_key=GROQ_KEY)
     models["groq-mixtral"] = LLMConfig(name="Mixtral 8x7B", provider="groq", model="mixtral-8x7b-32768", base_url=groq_base, api_key=GROQ_KEY)
     models["groq-gemma"] = LLMConfig(name="Gemma 2 9B", provider="groq", model="gemma2-9b-it", base_url=groq_base, api_key=GROQ_KEY)

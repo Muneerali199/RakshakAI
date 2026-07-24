@@ -23,6 +23,9 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path as _Path
+from dotenv import load_dotenv
+load_dotenv(_Path(__file__).resolve().parent.parent.parent / ".env")
 from typing import Any, Literal
 
 import uvicorn
@@ -108,26 +111,34 @@ class Server:
         self.llm = None
         self.tok = None
         self.v1 = None
+        self.engine_mode = "vllm"
         self.use_awq = USE_AWQ and bool(AWQ_PATH) and os.path.isdir(AWQ_PATH)
         self.model_path = AWQ_PATH if self.use_awq else MODEL_PATH
 
     def load(self) -> None:
-        log.info(f"loading vLLM engine on {self.model_path} (awq={self.use_awq})")
-        from vllm import LLM
-        from transformers import AutoTokenizer
+        try:
+            if not os.path.isdir(self.model_path):
+                raise FileNotFoundError(f"Model directory not found: {self.model_path}")
+            log.info(f"loading vLLM engine on {self.model_path} (awq={self.use_awq})")
+            from vllm import LLM
+            from transformers import AutoTokenizer
 
-        kwargs: dict[str, Any] = dict(
-            model=self.model_path,
-            dtype="bfloat16" if not self.use_awq else "float16",
-            gpu_memory_utilization=GPU_MEM_UTIL,
-            max_model_len=MAX_MODEL_LEN,
-            enforce_eager=False,
-            tensor_parallel_size=1,
-        )
-        if self.use_awq:
-            kwargs["quantization"] = "awq"
-        self.llm = LLM(**kwargs)
-        self.tok = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
+            kwargs: dict[str, Any] = dict(
+                model=self.model_path,
+                dtype="bfloat16" if not self.use_awq else "float16",
+                gpu_memory_utilization=GPU_MEM_UTIL,
+                max_model_len=MAX_MODEL_LEN,
+                enforce_eager=False,
+                tensor_parallel_size=1,
+            )
+            if self.use_awq:
+                kwargs["quantization"] = "awq"
+            self.llm = LLM(**kwargs)
+            self.tok = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
+            self.engine_mode = "vllm"
+        except Exception as e:
+            log.warning(f"vLLM engine unavailable ({e}). Falling back to RakshakAI API backend (Groq/Fireworks).")
+            self.engine_mode = "api"
 
         if ENABLE_V1_PREFILTER:
             try:
@@ -139,20 +150,32 @@ class Server:
                 self.v1 = None
 
     def generate(self, user_msg: str, max_tokens: int = MAX_TOKENS) -> tuple[dict, float]:
-        from vllm import SamplingParams
-        prompt = self.tok.apply_chat_template(
-            [
+        t0 = time.time()
+        if self.engine_mode == "vllm":
+            from vllm import SamplingParams
+            prompt = self.tok.apply_chat_template(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            sp = SamplingParams(temperature=TEMPERATURE, max_tokens=max_tokens)
+            out = self.llm.generate(prompt, sp)
+            dt = time.time() - t0
+            text = out[0].outputs[0].text.strip()
+        else:
+            from v2.cli.llm import chat_sync, registry
+            model_name = os.environ.get("RAKSHAK_V2_LLM_MODEL", "groq-llama-70b")
+            cfg = registry.get(model_name)
+            msgs = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
-            ],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        sp = SamplingParams(temperature=TEMPERATURE, max_tokens=max_tokens)
-        t0 = time.time()
-        out = self.llm.generate(prompt, sp)
-        dt = time.time() - t0
-        text = out[0].outputs[0].text.strip()
+            ]
+            text = chat_sync(msgs, cfg=cfg, max_tokens=max_tokens).strip()
+            dt = time.time() - t0
+
         if text.startswith("```"):
             text = text.strip("`")
             if "\n" in text:
@@ -218,14 +241,27 @@ def _build_user_for_scan(req: ScanRequest) -> str:
 
 
 def _normalize(obj: dict) -> Finding:
+    raw_conf = obj.get("confidence") or 0.0
+    if isinstance(raw_conf, str):
+        conf_map = {"critical": 0.95, "high": 0.85, "medium": 0.65, "low": 0.4, "info": 0.2}
+        raw_conf = conf_map.get(raw_conf.lower(), 0.5)
+
+    raw_sev = obj.get("severity")
+    if isinstance(raw_sev, str):
+        raw_sev = raw_sev.lower().strip()
+        if raw_sev not in ("critical", "high", "medium", "low", "info"):
+            raw_sev = "medium"
+    elif raw_sev is None:
+        raw_sev = "medium"
+
     return Finding(
         vulnerability=obj.get("vulnerability"),
-        cwe=obj.get("cwe"),
-        severity=obj.get("severity"),
-        confidence=float(obj.get("confidence") or 0.0),
+        cwe=obj.get("cwe") or obj.get("id"),
+        severity=raw_sev,
+        confidence=float(raw_conf),
         root_cause=obj.get("root_cause"),
         attack_scenario=obj.get("attack_scenario"),
-        secure_fix=obj.get("secure_fix"),
+        secure_fix=obj.get("secure_fix") or obj.get("remediation"),
         patched_code=obj.get("patched_code"),
         references=list(obj.get("references") or []),
     )

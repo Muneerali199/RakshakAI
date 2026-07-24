@@ -74,9 +74,14 @@ async function scanDocument(doc: vscode.TextDocument): Promise<void> {
   const line = 0;
   const col = 0;
   const range = new vscode.Range(line, col, line, Math.max(1, code.split('\n')[0].length));
-  const sev = vscode.DiagnosticSeverity[
-    ({ critical: 'Error', high: 'Error', medium: 'Warning', low: 'Information', info: 'Information' } as any)[f.severity || 'info']
-  ] ?? vscode.DiagnosticSeverity.Warning;
+  const severityMap: Record<string, vscode.DiagnosticSeverity> = {
+    critical: vscode.DiagnosticSeverity.Error,
+    high: vscode.DiagnosticSeverity.Error,
+    medium: vscode.DiagnosticSeverity.Warning,
+    low: vscode.DiagnosticSeverity.Information,
+    info: vscode.DiagnosticSeverity.Information,
+  };
+  const sev = severityMap[f.severity || 'info'] ?? vscode.DiagnosticSeverity.Warning;
 
   const msg = [
     `[${f.severity?.toUpperCase()}] ${f.cwe} — ${f.vulnerability}`,

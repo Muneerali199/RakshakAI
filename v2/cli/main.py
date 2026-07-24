@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
 """RakshakAI v3 — Multi-Model Security CLI."""
 from __future__ import annotations
-import os, sys, json, time, hashlib, threading, re
+import os, sys, json, time, hashlib, threading, re, shutil, subprocess
 from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.styles import Style
 
 from v2.cli.llm import registry, parallel_chat, chat_sync, stream_chat, chat_with_tools
 from v2.cli.display import console, show_banner, show_status, show_error, show_success
@@ -30,6 +23,13 @@ from v2.cli.project_context import build_project_context, load_rakshakai_md, fin
 from v2.cli.thinking import ThinkingDisplay, ThinkingPanel
 from v2.cli.agentic_tools import ReadTool, EditTool, GlobTool, GrepTool, BashTool, build_openai_tools_v2, dispatch as agentic_dispatch
 from v2.cli.permissions import approval, patch_tools_with_approval
+from v2.cli.usage import get_usage, check_ai_scan_allowed, increment_ai_scan, format_usage_bar
+from v2.cli.cost_tracker import get_session_costs, get_cumulative_stats, track_usage
+from v2.cli.compactor import should_compact, compact_conversation, get_context_report
+from v2.cli.hooks import hooks, Hook, HookEvent
+from v2.cli.git_workflow import (get_status, stage_all, commit, diff,
+                                 suggest_commit_message, create_pr, get_log, get_current_diff_for_commit)
+from v2.cli.system_prompt import build_system_prompt
 patch_tools_with_approval()
 
 HISTORY_FILE = os.path.expanduser("~/.rakshak_history")
@@ -56,49 +56,47 @@ def _chat_and_show(model: str, messages: list[dict]) -> str:
         return text
 
 
-class ModelCompleter(Completer):
+class ModelCompleter:
     COMMANDS = [
         "/help", "/model", "/models", "/parallel",
         "/scan", "/scan-project", "/explain", "/fix",
         "/batch", "/watch", "/watch-stop",
         "/diff", "/precommit", "/test", "/share",
-        "/index", "/search",  # Codebase indexing
+        "/index", "/search",
         "/history", "/log", "/stats",
         "/confirm", "/dismiss", "/cost",
         "/clear", "/session", "/exit",
         "/agent", "/swarm", "/skills",
         "/login", "/logout", "/whoami",
-        "/def", "/refs", "/hover", "/rename",  # LSP commands
+        "/def", "/refs", "/hover", "/rename",
         "/context", "/resume", "/fork", "/rakshakai.md",
-        "/permissions", "/plan",  # Claude Code-inspired
+        "/permissions", "/plan",
+        "/usage", "/pricing",
+        "/init", "/doctor", "/compact",
+        "/commit", "/review", "/pr",
     ]
 
     def get_completions(self, document, complete_event):
+        from prompt_toolkit.completion import Completion
         text = document.text_before_cursor
         
-        # Command completion
         if text.startswith("/") and " " not in text:
             for cmd in self.COMMANDS:
                 if cmd.startswith(text):
                     yield Completion(cmd, start_position=-len(text))
         
-        # Model name completion for /model and /parallel
         elif text.startswith("/model ") or text.startswith("/parallel ") or text.startswith("/agent "):
             prefix = text.split()[-1]
             for name in registry.list():
                 if name.startswith(prefix):
                     yield Completion(name, start_position=-len(prefix))
         
-        # File path completion for /scan, /explain, /log, /batch
         elif any(text.startswith(cmd + " ") for cmd in ["/scan", "/explain", "/log", "/batch", "/watch"]):
             from pathlib import Path
-            
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
                 return
-            
             path_prefix = parts[1]
-            
             try:
                 if path_prefix:
                     base_path = Path(path_prefix).parent if "/" in path_prefix else Path(".")
@@ -106,7 +104,6 @@ class ModelCompleter(Completer):
                 else:
                     base_path = Path(".")
                     name_prefix = ""
-                
                 if base_path.exists() and base_path.is_dir():
                     for item in sorted(base_path.iterdir()):
                         item_name = item.name
@@ -116,26 +113,12 @@ class ModelCompleter(Completer):
                             display_path = str(item.relative_to(".")) if item.is_relative_to(".") else str(item)
                             if item.is_dir():
                                 display_path += "/"
-                            yield Completion(
-                                display_path,
-                                start_position=-len(path_prefix),
-                                display=item_name + ("/" if item.is_dir() else "")
-                            )
+                            yield Completion(display_path, start_position=-len(path_prefix), display=item_name + ("/" if item.is_dir() else ""))
             except (OSError, ValueError):
                 pass
 
 
-bindings = KeyBindings()
 
-@bindings.add("c-c")
-def _(event):
-    raise KeyboardInterrupt()
-
-@bindings.add("c-d")
-def _(event):
-    sys.exit(0)
-
-prompt_style = Style.from_dict({"prompt": "bold cyan"})
 
 
 class RakshakREPL:
@@ -253,10 +236,20 @@ class RakshakREPL:
         code = self._read_file(args.strip())
         if code is None:
             return show_error(f"File not found: {args.strip()}")
-        
+
+        # Check AI scan limit for free plan
+        if auth_state.plan != "pro":
+            allowed, msg = check_ai_scan_allowed()
+            if not allowed:
+                show_error(f"Daily AI scan limit reached. Upgrade: /pricing")
+                console.print(f"[dim]{msg}[/]")
+                return False
+            show_status(msg, "yellow")
+
         t0 = time.time()
         with console.status(f"[cyan]Scanning {args.strip()}...", spinner="dots"):
             from v2.cli.scanner import scan_code
+            increment_ai_scan()
             result = scan_code(code, language=Path(args.strip()).suffix[1:], model=registry.active)
         
         vulns = result.get("vulnerabilities", [])
@@ -290,12 +283,25 @@ class RakshakREPL:
         
         return True
 
+    def _check_ai_limit(self) -> bool:
+        """Common AI limit check. Returns True if allowed."""
+        if auth_state.plan != "pro":
+            allowed, msg = check_ai_scan_allowed()
+            if not allowed:
+                show_error("Daily AI scan limit reached. See /pricing to upgrade.")
+                return False
+            show_status(msg, "yellow")
+        return True
+
     def _handle_explain(self, args: str) -> bool:
         if not args.strip():
             return show_error("Usage: /explain <file>")
         code = self._read_file(args.strip())
         if code is None:
             return show_error(f"File not found: {args.strip()}")
+        if not self._check_ai_limit():
+            return False
+        increment_ai_scan()
         show_status(f"Explaining {args.strip()} ...")
         _chat_and_show(registry.active, get_explain_messages(code))
         return True
@@ -308,6 +314,9 @@ class RakshakREPL:
         run_tests = "--test" in args
         desc = args.replace("--test", "").strip()
         
+        if not self._check_ai_limit():
+            return False
+        increment_ai_scan()
         show_status(f"Generating fix for: {desc}")
         _chat_and_show(registry.active, get_fix_messages(desc))
         
@@ -369,6 +378,9 @@ class RakshakREPL:
         from v2.cli.scanner import collect_source_files
         from v2.cli.prompts import get_project_scan_prompt
 
+        if not self._check_ai_limit():
+            return False
+
         target_dir = args.strip() or self.current_dir
         if not os.path.isdir(target_dir):
             return show_error(f"Directory not found: {target_dir}")
@@ -384,6 +396,7 @@ class RakshakREPL:
         scanner = BatchScanner(max_workers=4)
         results = scanner.scan_files(files, model=registry.active)
 
+        increment_ai_scan()
         self.files_scanned += len(files)
         vuln_count = sum(1 for r in results if r.cwe)
         self.vulnerabilities_found += vuln_count
@@ -855,6 +868,458 @@ class RakshakREPL:
             console.print(f"[dim]Use /permissions always_ask to return to normal mode[/]")
         return True
 
+    def _handle_usage(self, args: str) -> bool:
+        """Show current usage stats and plan limits."""
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich import box
+
+        usage = get_usage()
+        plan_name = auth_state.plan.capitalize() if auth_state.logged_in else "Free (not logged in)"
+        plan_label = auth_state.plan if auth_state.logged_in else "free"
+
+        # Determine if pro or free limits
+        ai_limit = 5
+        regex_limit = 10
+        if plan_label == "pro":
+            ai_limit = -1
+            regex_limit = -1
+
+        table = Table(box=box.SIMPLE, padding=(0, 2))
+        table.add_column("Resource", style="cyan")
+        table.add_column("Usage", ratio=1)
+
+        for label, used, limit in [
+            ("AI Scans", usage["ai_scans"]["used"], ai_limit),
+            ("Regex Scans", usage["regex_scans"]["used"], regex_limit),
+        ]:
+            if limit == -1:
+                bar = "─" * 20 + " unlimited"
+            else:
+                bar = format_usage_bar(used, limit)
+            table.add_row(label, f"[bold]{bar}[/]")
+
+        table.add_row("Plan", f"[bold]{plan_name}[/]")
+        table.add_row("Date", f"[dim]{usage['date']}[/]")
+
+        console.print(Panel(table, title="[bold]Usage & Limits[/]", border_style="cyan"))
+        if plan_label == "free":
+            console.print(f"[dim]Upgrade to Pro for unlimited scans: /pricing[/]")
+        return True
+
+    def _handle_pricing(self, args: str) -> bool:
+        """Show pricing information for RakshakAI."""
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich import box
+        from rich.columns import Columns
+
+        free_features = [
+            "[green]✓[/] 5 AI scans/day",
+            "[green]✓[/] 10 regex scans/day",
+            "[green]✓[/] Llama 3.1 8B model",
+            "[green]✓[/] CLI + Web UI",
+            "[dim]✗ Session sharing[/]",
+            "[dim]✗ Priority support[/]",
+        ]
+        pro_features = [
+            "[green]✓[/] Unlimited AI scans",
+            "[green]✓[/] Unlimited regex scans",
+            "[green]✓[/] All models (Llama 70B, RakshakAI 14B)",
+            "[green]✓[/] CLI + Web UI",
+            "[green]✓[/] Session sharing",
+            "[green]✓[/] Priority support",
+            "[green]✓[/] Agentic tools",
+        ]
+
+        free_panel = Panel(
+            "\n".join(free_features),
+            title="[bold]Free — $0[/]",
+            border_style="dim",
+            padding=(1, 2),
+        )
+        pro_panel = Panel(
+            "\n".join(pro_features),
+            title="[bold]Pro — $10/month[/]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+
+        console.print()
+        console.print(Panel.fit(
+            "[bold]▲ RakshakAI Pricing[/]\n"
+            "[dim]Simple, transparent pricing. Start free, upgrade when you need more.[/]",
+            border_style="cyan",
+        ))
+        console.print()
+        console.print(Columns([free_panel, pro_panel]))
+        console.print()
+        if auth_state.plan == "pro":
+            console.print("[green]✓ You're on the Pro plan — enjoy unlimited access![/]")
+        else:
+            console.print("[bold yellow]💡 Tip:[/] [cyan]Email us at rakshak@example.com to upgrade to Pro[/]")
+        console.print()
+        return True
+
+    def _handle_init(self, args: str) -> bool:
+        """Scaffold a new project (/init <type> <name>)."""
+        from rich.panel import Panel
+
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            console.print(Panel.fit(
+                "[bold]Project Scaffolding[/]\n\n"
+                "Usage: /init <type> <name>\n\n"
+                "Types:\n"
+                "  python       — Python package with pytest\n"
+                "  node         — Node.js project with npm\n"
+                "  react        — React + Vite project\n"
+                "  flask        — Flask web app\n"
+                "  fastapi      — FastAPI web app\n"
+                "  cli          — Python CLI with click\n"
+                "  security     — Security scanning tool\n"
+                "  empty        — Empty directory with git",
+                border_style="cyan",
+            ))
+            return True
+
+        project_type, name = parts[0].lower(), parts[1]
+        target = Path(self.current_dir) / name
+
+        if target.exists():
+            return show_error(f"Directory '{name}' already exists")
+
+        show_status(f"Scaffolding {project_type} project: {name} ...", "cyan")
+
+        try:
+            target.mkdir(parents=True)
+
+            # Common files for all projects
+            (target / ".gitignore").write_text("""__pycache__/
+*.py[cod]
+.env
+*.egg-info/
+dist/
+build/
+node_modules/
+.venv/
+venv/
+""")
+
+            if project_type == "python":
+                (target / "README.md").write_text(f"# {name}\n\nDescription.\n")
+                (target / "pyproject.toml").write_text(f"""[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{name}"
+version = "0.1.0"
+requires-python = ">=3.10"
+""")
+                (target / "src" / name).mkdir(parents=True)
+                (target / "src" / name / "__init__.py").write_text(f"\"\"\"{name} package.\"\"\"\n")
+                (target / "tests").mkdir()
+                (target / "tests" / "__init__.py").write_text("")
+                (target / "tests" / f"test_{name}.py").write_text(f"\"\"\"Tests for {name}.\"\"\"\n\n\ndef test_placeholder():\n    assert True\n")
+                (target / "AGENTS.md").write_text(f"# AGENTS.md — {name}\n\nAI agent instructions for this project.\n")
+                (target / "RAKSHAKAI.md").write_text(f"# RAKSHAKAI.md — {name}\n\nProject context for RakshakAI.\n\n## Commands\n- Test: `pytest`\n- Lint: `ruff check .`\n")
+
+            elif project_type == "node":
+                pkg = {"name": name, "version": "0.1.0", "private": True, "scripts": {"test": "echo 'no tests'", "start": "node index.js"}}
+                (target / "package.json").write_text(json.dumps(pkg, indent=2))
+                (target / "index.js").write_text(f"// {name}\nconsole.log('Hello from {name}');\n")
+                (target / "AGENTS.md").write_text(f"# AGENTS.md — {name}\n\nAI agent instructions for this project.\n")
+
+            elif project_type == "react":
+                pkg = {"name": name, "version": "0.1.0", "private": True, "type": "module",
+                       "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"}}
+                (target / "package.json").write_text(json.dumps(pkg, indent=2))
+                (target / "index.html").write_text(f'<!DOCTYPE html>\n<html><head><title>{name}</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>')
+                (target / "vite.config.js").write_text("import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()] })")
+                src = target / "src"
+                src.mkdir()
+                (src / "main.jsx").write_text("import React from 'react'\nimport ReactDOM from 'react-dom/client'\nReactDOM.createRoot(document.getElementById('root')).render(<h1>Hello</h1>)")
+                (src / "App.jsx").write_text("export default function App() { return <h1>Hello</h1> }")
+
+            elif project_type in ("flask", "fastapi"):
+                (target / "README.md").write_text(f"# {name}\n\n{project_type} app.\n")
+                (target / "app.py").write_text(f"\"\"\"{project_type} app.\"\"\"\nfrom flask import Flask\n\napp = Flask(__name__)\n\n@app.route('/')\ndef hello():\n    return 'Hello from {name}'\n" if project_type == "flask" else f"\"\"\"{project_type} app.\"\"\"\nfrom fastapi import FastAPI\n\napp = FastAPI(title=\"{name}\")\n\n@app.get('/')\nasync def root():\n    return {{\"message\": \"Hello from {name}\"}}\n")
+                (target / "requirements.txt").write_text("flask\n" if project_type == "flask" else "fastapi\nuvicorn\n")
+
+            elif project_type == "security":
+                (target / "README.md").write_text(f"# {name}\n\nSecurity scanning tool.\n")
+                (target / "scanner.py").write_text(f"\"\"\"Security scanner.\"\"\"\nimport re\n\nVULN_PATTERNS = [\n    (r'exec\\(', 'Code injection'),\n    (r'eval\\(', 'Code injection'),\n    (r'subprocess\\.call', 'Command injection'),\n]\n\ndef scan(code: str) -> list[dict]:\n    findings = []\n    for pattern, vuln_type in VULN_PATTERNS:\n        for match in re.finditer(pattern, code):\n            findings.append({{\n                \"type\": vuln_type,\n                \"line\": code[:match.start()].count('\\n') + 1,\n                \"match\": match.group(),\n            }})\n    return findings\n")
+                (target / "AGENTS.md").write_text(f"# AGENTS.md — {name}\n\nSecurity-first development instructions for this project.\n")
+
+            elif project_type == "cli":
+                (target / "README.md").write_text(f"# {name}\n\nCLI tool.\n")
+                (target / "pyproject.toml").write_text(f"""[project]
+name = "{name}"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["click"]
+
+[project.scripts]
+{name} = "{name}.cli:main"
+""")
+                pkg_dir = target / name
+                pkg_dir.mkdir()
+                (pkg_dir / "__init__.py").write_text(f"\"\"\"{name} CLI.\"\"\"\n")
+                (pkg_dir / "cli.py").write_text(f"\"\"\"CLI entry point.\"\"\"\nimport click\n\n@click.group()\ndef cli():\n    \"\"\"{name} - CLI tool.\"\"\"\n\n@cli.command()\ndef hello():\n    \"\"\"Say hello.\"\"\"\n    click.echo('Hello from {name}')\n\nif __name__ == '__main__':\n    cli()\n")
+
+            else:  # empty
+                (target / "README.md").write_text(f"# {name}\n")
+
+            # Init git
+            subprocess.run(["git", "init"], cwd=target, capture_output=True, timeout=5)
+
+            show_success(f"Scaffolded {project_type} project: {name}")
+            console.print(f"[dim]  {target}[/]")
+            console.print(f"[dim]  Use /scan-project to scan the new project[/]")
+
+            return True
+
+        except Exception as e:
+            # Clean up on failure
+            import shutil
+            shutil.rmtree(target, ignore_errors=True)
+            return show_error(f"Failed: {e}")
+
+    def _handle_doctor(self, args: str) -> bool:
+        """Run diagnostics on the environment."""
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich import box
+        import platform, shutil
+
+        checks = []
+
+        # Python
+        py_version = platform.python_version()
+        checks.append(("Python", py_version, "OK" if py_version >= "3.10" else "OLD"))
+
+        # Git
+        git_path = shutil.which("git")
+        checks.append(("Git", "✓" if git_path else "✗ Not found", "OK" if git_path else "MISSING"))
+
+        # Node
+        node_path = shutil.which("node")
+        checks.append(("Node.js", "✓" if node_path else "✗ Not found", "OK" if node_path else "MISSING"))
+
+        # GPU
+        try:
+            import torch
+            gpu = torch.cuda.is_available() or (hasattr(torch, 'mps') and torch.mps.is_available())
+            gpu_name = "MPS" if hasattr(torch, 'mps') and torch.mps.is_available() else (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None")
+            checks.append(("GPU", gpu_name, "OK" if gpu else "NONE"))
+        except Exception:
+            checks.append(("GPU", "Not available", "NONE"))
+
+        # API keys
+        api_keys = {
+            "GROQ": bool(os.environ.get("GROQ_API_KEY")),
+            "OPENAI": bool(os.environ.get("OPENAI_API_KEY")),
+            "ANTHROPIC": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "HF": bool(os.environ.get("HF_TOKEN")),
+        }
+        for name, present in api_keys.items():
+            checks.append((f"{name} Key", "✓" if present else "✗", "OK" if present else "MISSING"))
+
+        # Model availability
+        from v2.cli.llm import registry
+        models = registry.list()
+        checks.append(("Models", str(len(models)), "OK"))
+
+        # Git repo
+        git_ok = get_status() is not None
+        checks.append(("Git Repo", "✓" if git_ok else "✗ (not in a repo)", "OK" if git_ok else "NONE"))
+
+        table = Table(box=box.ROUNDED, title="[bold]Environment Diagnostics[/]")
+        table.add_column("Check", style="cyan")
+        table.add_column("Value")
+        table.add_column("Status")
+        for name, value, status in checks:
+            color = {"OK": "green", "MISSING": "red", "NONE": "yellow", "OLD": "red"}.get(status, "white")
+            table.add_row(name, value, f"[{color}]{status}[/]")
+
+        console.print(table)
+
+        # Session info
+        git = get_status()
+        if git:
+            console.print(f"\n[dim]Branch: {git.branch} | {'DIRTY' if git.dirty else 'clean'} | {len(git.staged)} staged, {len(git.unstaged)} unstaged, {len(git.untracked)} untracked[/]")
+
+        return True
+
+    def _handle_compact(self, args: str) -> bool:
+        """Compact conversation context to stay within token limits."""
+        if len(self.messages) < 4:
+            return show_status("Conversation too short to compact (< 4 messages).", "yellow")
+
+        report = get_context_report(self.messages)
+        show_status(
+            f"Context: {report['total_tokens']} tokens / {report['budget']} budget "
+            f"({report['usage_pct']}%) — {report['message_count']} messages",
+            "yellow",
+        )
+
+        if not report["needs_compaction"] and "force" not in args:
+            return show_status("Under budget, no compaction needed. Use /compact force to compact anyway.", "green")
+
+        before = len(self.messages)
+        self.messages = compact_conversation(self.messages, model=registry.active)
+        after = len(self.messages)
+        dropped = before - after
+
+        hooks.trigger(HookEvent.ON_COMPACT, {
+            "before": before, "after": after, "model": registry.active,
+        })
+
+        new_report = get_context_report(self.messages)
+        show_success(f"Compacted: {before} → {after} messages ({dropped} dropped, {new_report['total_tokens']} tokens)")
+        return True
+
+    def _handle_commit(self, args: str) -> bool:
+        """Git commit with AI-suggested message or custom message."""
+        from rich.prompt import Prompt, Confirm as RichConfirm
+        from rich.panel import Panel
+
+        git = get_status()
+        if not git:
+            return show_error("Not a git repository")
+
+        if not git.staged and not git.unstaged and not git.untracked:
+            return show_status("Nothing to commit.", "yellow")
+
+        # Auto-stage if nothing staged
+        if not git.staged:
+            if git.unstaged or git.untracked:
+                auto_stage = RichConfirm.ask("Stage all changes?")
+                if auto_stage:
+                    ok, msg = stage_all()
+                    if ok:
+                        show_success(msg)
+                    else:
+                        return show_error(msg)
+                else:
+                    return show_status("Commit cancelled.", "yellow")
+            else:
+                return show_status("Nothing to commit.", "yellow")
+
+        # Show diff
+        diff_text, diff_type = get_current_diff_for_commit()
+        if diff_text:
+            console.print(Panel(
+                diff_text[:2000],
+                title=f"[bold]Diff ({diff_type})[/]",
+                border_style="cyan",
+            ))
+
+        # Suggest message
+        show_status("Generating commit message...", "cyan")
+        suggested = suggest_commit_message(diff_text, registry.active)
+
+        if args.strip():
+            msg = args.strip()
+        else:
+            console.print(f"\n[dim]Suggested:[/] {suggested.split(chr(10))[0] if suggested else ''}")
+            msg = Prompt.ask("Commit message", default=suggested.split("\n")[0] if suggested else "")
+
+        if not msg:
+            return show_status("Commit cancelled.", "yellow")
+
+        ok, commit_msg = commit(msg)
+        if ok:
+            hooks.trigger(HookEvent.POST_COMMIT, {"message": msg})
+            show_success(commit_msg)
+        else:
+            show_error(commit_msg)
+
+        return True
+
+    def _handle_review(self, args: str) -> bool:
+        """AI code review of changes or specific files."""
+        from rich.panel import Panel
+        from v2.cli.prompts import get_explain_messages
+
+        if args.strip():
+            # Review specific file
+            code = self._read_file(args.strip())
+            if code is None:
+                return show_error(f"File not found: {args.strip()}")
+            review_prompt = f"Review this file for security issues, bugs, and code quality:\n\n```{Path(args.strip()).suffix[1:]}\n{code[:4000]}\n```"
+        else:
+            # Review git diff
+            diff_text, diff_type = get_current_diff_for_commit()
+            if not diff_text:
+                return show_status("No changes to review.", "yellow")
+            review_prompt = f"Review these code changes for security issues, bugs, and quality:\n\n```diff\n{diff_text[:4000]}\n```"
+
+        if not self._check_ai_limit():
+            return False
+        increment_ai_scan()
+
+        self.messages.append({"role": "user", "content": review_prompt})
+        context = self._build_project_context()
+        response = self._chat_with_react(review_prompt, context)
+        return True
+
+    def _handle_pr(self, args: str) -> bool:
+        """Create a GitHub PR."""
+        from rich.prompt import Prompt, Confirm as RichConfirm
+        from rich.panel import Panel
+
+        if not shutil.which("gh"):
+            return show_error("GitHub CLI not found. Install: brew install gh && gh auth login")
+
+        git = get_status()
+        if not git:
+            return show_error("Not a git repository")
+
+        title = ""
+        body = ""
+        base = "main"
+
+        parts = args.strip().split()
+        if parts:
+            # Parse args like: --base develop --title "My PR"
+            i = 0
+            while i < len(parts):
+                if parts[i] == "--base" and i + 1 < len(parts):
+                    base = parts[i + 1]
+                    i += 2
+                elif parts[i] == "--title" and i + 1 < len(parts):
+                    title = parts[i + 1]
+                    i += 2
+                else:
+                    i += 1
+
+        if not title:
+            # Suggest title from recent commits
+            log = get_log(3)
+            recent = log[0]["message"] if log else ""
+            title = Prompt.ask("PR title", default=recent)
+
+        if not body:
+            body = Prompt.ask("PR description (optional)", default="")
+
+        console.print(f"\n[dim]Creating PR: {title}[/]")
+        console.print(f"[dim]Base: {base} → Head: {git.branch}[/]")
+        if body:
+            console.print(f"[dim]Body: {body[:100]}[/]")
+
+        if RichConfirm.ask("Create this PR?"):
+            ok, result = create_pr(title, body, base)
+            if ok:
+                show_success(f"PR created: {result}")
+            else:
+                show_error(result)
+        else:
+            show_status("PR cancelled.", "yellow")
+
+        return True
+
     def _handle_rakshakai_md(self, args: str) -> bool:
         """Create or show RAKSHAKAI.md project context file."""
         root = find_project_root(self.current_dir)
@@ -1118,20 +1583,34 @@ class RakshakREPL:
         return True
 
     def _handle_agent(self, args: str) -> bool:
-        """Run autonomous agent on a task."""
         if not args.strip():
             return show_error("Usage: /agent <task description>")
-        show_status(f"Agent starting: {args.strip()[:80]}...", "cyan")
-        self.models_used.add(self._ensure_agent().model)
-        result = self._ensure_agent().run(args.strip())
+        if not self._check_ai_limit():
+            return False
+        increment_ai_scan()
+        show_status(f"Agent: {args.strip()[:80]}", "cyan")
+        agent = self._ensure_agent()
+        self.models_used.add(agent.model)
+
+        from v2.cli.display import StreamingPanel
+        collected = []
+
+        def on_token(tok):
+            collected.append(tok)
+
+        with StreamingPanel() as panel:
+            result = agent.run(args.strip(), on_token=panel.update)
+
         self._show_agent_result(result)
         return True
 
     def _handle_swarm(self, args: str) -> bool:
-        """Run multi-agent swarm: decompose task, spawn subagents in parallel."""
         if not args.strip():
             return show_error("Usage: /swarm <task description>")
-        show_status(f"Swarm orchestrating: {args.strip()[:80]}...", "cyan")
+        if not self._check_ai_limit():
+            return False
+        increment_ai_scan()
+        show_status(f"Swarm: {args.strip()[:80]}", "cyan")
         from v2.cli.orchestrator import OrchestratorAgent
         orch = OrchestratorAgent(model=registry.active, max_subagents=5)
         result = orch.run(args.strip())
@@ -1380,19 +1859,57 @@ class RakshakREPL:
     def run(self):
         auth_state.load()
         show_banner(registry.active)
-        status_parts = ["⚡ RakshakAI ready · /help for commands · /scan-project to scan everything"]
+        usage = get_usage()
+        plan_name = auth_state.plan.capitalize() if auth_state.logged_in else "Free"
+        ai_rem = usage["ai_scans"]["remaining"]
+        rx_rem = usage["regex_scans"]["remaining"]
+        status_parts = [
+            f"⚡ RakshakAI ready · /help for commands",
+            f"📋 {plan_name} — {ai_rem} AI / {rx_rem} regex scans left today",
+        ]
         if auth_state.logged_in:
             status_parts.append(f"🔐 {auth_state.email}")
         show_status(" · ".join(status_parts), "green")
+        if ai_rem <= 1 and auth_state.plan != "pro":
+            console.print(f"[yellow]⚠ Low on scans. Upgrade: /pricing for unlimited use[/]")
 
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import FileHistory
+        from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.styles import Style
+
+        kb = KeyBindings()
+        @kb.add("c-c")
+        def _cancel(event):
+            raise KeyboardInterrupt()
+        @kb.add("c-d")
+        def _eof(event):
+            sys.exit(0)
+        @kb.add("up")
+        def _up(event):
+            buf = event.app.current_buffer
+            if buf.complete_state:
+                buf.complete_previous()
+            else:
+                buf.history_backward()
+        @kb.add("down")
+        def _down(event):
+            buf = event.app.current_buffer
+            if buf.complete_state:
+                buf.complete_next()
+            else:
+                buf.history_forward()
+
+        prompt_style = Style.from_dict({"prompt": "bold cyan"})
         session = PromptSession(
             history=FileHistory(HISTORY_FILE),
             auto_suggest=AutoSuggestFromHistory(),
             completer=ModelCompleter(),
-            key_bindings=bindings,
+            key_bindings=kb,
             style=prompt_style,
             complete_while_typing=True,
-            enable_history_search=True,
+            enable_history_search=False,
         )
 
         while True:
@@ -1443,6 +1960,14 @@ class RakshakREPL:
                     "/permissions": self._handle_permissions,
                     "/plan": self._handle_plan,
                     "/rakshakai.md": self._handle_rakshakai_md,
+                    "/usage": self._handle_usage,
+                    "/pricing": self._handle_pricing,
+                    "/init": self._handle_init,
+                    "/doctor": self._handle_doctor,
+                    "/compact": self._handle_compact,
+                    "/commit": self._handle_commit,
+                    "/review": self._handle_review,
+                    "/pr": self._handle_pr,
                     "/resume": self._handle_resume,
                     "/fork": self._handle_fork,
                     "/clear": lambda a: (self.messages.clear(), show_status("Conversation context cleared", "green")),

@@ -49,10 +49,13 @@ def extract_cwe(text: str) -> str | None:
 def extract_is_vulnerable(text: str) -> bool | None:
     """Determine if the model classified the code as vulnerable."""
     lower = text.lower()
-    if any(w in lower for w in ["no vulnerability", "not vulnerable", "secure", "benign", "clean"]):
+    if any(w in lower for w in ["no vulnerability", "not vulnerable", "no security issue"]):
         return False
     if any(w in lower for w in ["vulnerable", "vulnerability", "security issue", "unsafe", "insecure"]):
         return True
+    if any(w in lower for w in ["benign", "clean"]):
+        if "vulnerab" not in lower:
+            return False
     return None
 
 

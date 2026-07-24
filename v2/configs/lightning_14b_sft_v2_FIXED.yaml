@@ -16,7 +16,7 @@ datasets:
   - type: chat_template
     chat_template: chatml
     field_messages: messages
-    path: v2/inputs/datasets/axolotl/train_250k.jsonl
+    path: v2/inputs/datasets/axolotl/train_87k_with_reasoning.jsonl
     split: train
 
 eval_datasets:
