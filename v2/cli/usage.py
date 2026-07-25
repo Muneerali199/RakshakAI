@@ -10,9 +10,9 @@ USAGE_DIR = Path.home() / ".rakshak"
 USAGE_FILE = USAGE_DIR / "usage.json"
 
 FREE_LIMITS = {
-    "ai_scans": 5,
-    "regex_scans": 10,
-    "models": ["groq-llama-8b"],
+    "ai_scans": -1,
+    "regex_scans": -1,
+    "models": "all",
 }
 
 PRO_LIMITS = {
@@ -96,10 +96,13 @@ def get_usage() -> dict:
 
 def check_ai_scan_allowed() -> tuple[bool, str]:
     """Check if AI scan is allowed. Returns (allowed, reason)."""
+    limit = FREE_LIMITS["ai_scans"]
+    if limit == -1:
+        return True, "Unlimited AI scans remaining"
+    
     data = _load_usage()
     _ensure_today(data)
     used = data.get("ai_scans", 0)
-    limit = FREE_LIMITS["ai_scans"]
     if used >= limit:
         remaining_secs = max(0, 86400 - (time.time() - data.get("last_reset", 0)))
         return False, f"Daily AI scan limit reached ({limit}/{limit}). Resets in {int(remaining_secs // 3600)}h {int((remaining_secs % 3600) // 60)}m"
@@ -109,10 +112,13 @@ def check_ai_scan_allowed() -> tuple[bool, str]:
 
 def check_regex_scan_allowed() -> tuple[bool, str]:
     """Check if regex scan is allowed. Returns (allowed, reason)."""
+    limit = FREE_LIMITS["regex_scans"]
+    if limit == -1:
+        return True, "Unlimited regex scans remaining"
+        
     data = _load_usage()
     _ensure_today(data)
     used = data.get("regex_scans", 0)
-    limit = FREE_LIMITS["regex_scans"]
     if used >= limit:
         return False, f"Daily regex scan limit reached ({limit}/{limit})"
     remaining = limit - used
