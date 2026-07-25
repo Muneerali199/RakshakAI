@@ -2,11 +2,11 @@
   "name": "rakshakai-v2",
   "displayName": "RakshakAI v2 — Security Copilot",
   "description": "AI security reviewer powered by RakshakAI v2. Scans your code on save and reviews PR diffs.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "RakshakAI",
   "license": "Apache-2.0",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.86.0"
   },
   "categories": [
     "Other",
@@ -29,10 +29,30 @@
     "onLanguage:go",
     "onLanguage:rust",
     "onLanguage:c",
-    "onLanguage:cpp"
+    "onLanguage:cpp",
+    "onLanguage:php",
+    "onLanguage:csharp",
+    "onLanguage:ruby"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rakshak",
+          "title": "RakshakAI",
+          "icon": "$(shield)"
+        }
+      ]
+    },
+    "views": {
+      "rakshak": [
+        {
+          "id": "rakshak-files",
+          "name": "Scanned Files"
+        }
+      ]
+    },
     "configuration": {
       "title": "RakshakAI v2",
       "properties": {
@@ -86,7 +106,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.86.0",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^2.22.0"
   },

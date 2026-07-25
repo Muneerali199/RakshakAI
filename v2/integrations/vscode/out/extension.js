@@ -41,6 +41,8 @@ exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const axios_1 = __importDefault(require("axios"));
 const RAKSHAK_DIAG = 'rakshakai-v2';
+const abortControllers = new Map();
+const findingsCache = new Map();
 function getConfig() {
     const cfg = vscode.workspace.getConfiguration('rakshakai');
     return {
@@ -51,16 +53,17 @@ function getConfig() {
     };
 }
 function langIdFor(doc) {
-    switch (doc.languageId) {
-        case 'python': return 'python';
-        case 'javascript': return 'javascript';
-        case 'typescript': return 'typescript';
-        case 'java': return 'java';
-        case 'go': return 'go';
-        case 'rust': return 'rust';
-        case 'c': return 'c';
-        case 'cpp': return 'cpp';
-        default: return 'text';
+    const map = {
+        python: 'python', javascript: 'javascript', typescript: 'typescript',
+        java: 'java', go: 'go', rust: 'rust', c: 'c', cpp: 'cpp',
+        php: 'php', csharp: 'csharp', ruby: 'ruby',
+    };
+    return map[doc.languageId] || 'text';
+}
+function checkServerUrlWarning(cfg) {
+    const url = cfg.serverUrl;
+    if (!url.includes('localhost') && !url.includes('127.0.0.1')) {
+        vscode.window.showWarningMessage(`RakshakAI: Server URL is not localhost (${url}). Code will be sent to a remote server.`);
     }
 }
 async function scanDocument(doc) {
@@ -68,26 +71,36 @@ async function scanDocument(doc) {
     const code = doc.getText();
     if (!code.trim())
         return;
+    const docId = doc.uri.toString();
+    // Cancel any in-flight scan for this document (race condition fix)
+    const existing = abortControllers.get(docId);
+    if (existing)
+        existing.abort();
+    const controller = new AbortController();
+    abortControllers.set(docId, controller);
     let resp;
     try {
-        const r = await axios_1.default.post(`${cfg.serverUrl}/v2/scan`, { code, language: langIdFor(doc), filename: doc.fileName }, { timeout: 60_000 });
+        const r = await axios_1.default.post(`${cfg.serverUrl}/v2/scan`, { code, language: langIdFor(doc), filename: doc.fileName }, { timeout: 10_000, signal: controller.signal });
         resp = r.data;
     }
     catch (e) {
-        vscode.window.showWarningMessage(`RakshakAI v2: ${e?.message || 'server unreachable'}`);
+        if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError')
+            return;
+        vscode.window.showWarningMessage(`RakshakAI: ${e?.message || 'server unreachable'}`);
         return;
     }
-    const f = resp.finding;
-    if (!f || !f.cwe) {
-        return; // no finding
+    finally {
+        abortControllers.delete(docId);
     }
+    findingsCache.set(docId, resp);
+    const f = resp.finding;
+    if (!f || !f.cwe)
+        return;
     if (cfg.severityFilter.indexOf(f.severity ?? 'info') < 0)
         return;
     if ((f.confidence ?? 0) < cfg.minConfidence)
         return;
-    const line = 0;
-    const col = 0;
-    const range = new vscode.Range(line, col, line, Math.max(1, code.split('\n')[0].length));
+    const range = new vscode.Range(0, 0, 0, Math.max(1, code.split('\n')[0].length));
     const severityMap = {
         critical: vscode.DiagnosticSeverity.Error,
         high: vscode.DiagnosticSeverity.Error,
@@ -105,7 +118,6 @@ async function scanDocument(doc) {
     diag.code = f.cwe ?? 'RAKSHAK';
     diag.source = RAKSHAK_DIAG;
     diag.relatedInformation = (f.references || []).slice(0, 3).map(url => new vscode.DiagnosticRelatedInformation(new vscode.Location(doc.uri, range), url));
-    // Attach the patched code as part of the related info via a code action
     diag.patched_code = f.patched_code;
     const collection = vscode.languages.createDiagnosticCollection(RAKSHAK_DIAG);
     collection.set(doc.uri, [diag]);
@@ -121,7 +133,45 @@ function applyPatchCommand(diag) {
     };
     return fix;
 }
+// TreeDataProvider for scanned files
+class RakshakTreeProvider {
+    _onDidChangeTreeData = new vscode.EventEmitter();
+    onDidChangeTreeData = this._onDidChangeTreeData.event;
+    items = [];
+    refresh() {
+        this._onDidChangeTreeData.fire(undefined);
+    }
+    getTreeItem(element) {
+        return element;
+    }
+    getChildren() {
+        const diags = vscode.languages.getDiagnostics();
+        this.items = [];
+        for (const [uri, diagList] of diags) {
+            const rakshakDiags = diagList.filter(d => d.source === RAKSHAK_DIAG);
+            if (rakshakDiags.length > 0) {
+                const item = new vscode.TreeItem(uri.fsPath.split('/').pop() || uri.fsPath);
+                item.resourceUri = uri;
+                item.tooltip = `${rakshakDiags.length} finding(s)`;
+                item.iconPath = vscode.ThemeIcon.File;
+                item.command = {
+                    command: 'vscode.open',
+                    title: 'Open File',
+                    arguments: [uri],
+                };
+                this.items.push(item);
+            }
+        }
+        return this.items;
+    }
+}
 function activate(context) {
+    const diagnosticCollection = vscode.languages.createDiagnosticCollection(RAKSHAK_DIAG);
+    const treeDataProvider = new RakshakTreeProvider();
+    // Register tree view once
+    vscode.window.registerTreeDataProvider('rakshak-files', treeDataProvider);
+    // Check server URL on activation
+    checkServerUrlWarning(getConfig());
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.scanFile', () => {
         const ed = vscode.window.activeTextEditor;
         if (ed)
@@ -131,7 +181,8 @@ function activate(context) {
         const docs = vscode.workspace.textDocuments;
         for (const d of docs)
             await scanDocument(d);
-        vscode.window.showInformationMessage(`RakshakAI v2: scanned ${docs.length} open files`);
+        treeDataProvider.refresh();
+        vscode.window.showInformationMessage(`RakshakAI: scanned ${docs.length} open files`);
     }));
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.showLastFinding', () => {
         const ed = vscode.window.activeTextEditor;
@@ -158,12 +209,13 @@ function activate(context) {
         const fullRange = new vscode.Range(ed.document.positionAt(0), ed.document.positionAt(ed.document.getText().length));
         await ed.edit(b => b.replace(fullRange, patched));
     }));
-    // Code action provider
-    context.subscriptions.push(vscode.languages.registerCodeActionsProvider([
+    // Code action provider — all supported languages
+    const supportedLanguages = [
         'python', 'javascript', 'typescript', 'java',
-        'go', 'rust', 'c', 'cpp',
-    ], {
-        provideCodeActions: (doc, _range, ctx) => ctx.diagnostics
+        'go', 'rust', 'c', 'cpp', 'php', 'csharp', 'ruby',
+    ];
+    context.subscriptions.push(vscode.languages.registerCodeActionsProvider(supportedLanguages, {
+        provideCodeActions: (_doc, _range, ctx) => ctx.diagnostics
             .filter(d => d.source === RAKSHAK_DIAG)
             .map(applyPatchCommand),
     }));
@@ -173,12 +225,25 @@ function activate(context) {
         if (cfg.scanOnSave)
             scanDocument(doc);
     }));
+    // Cleanup on file close (memory fix)
+    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(doc => {
+        const docId = doc.uri.toString();
+        findingsCache.delete(docId);
+        abortControllers.delete(docId);
+        diagnosticCollection.delete(doc.uri);
+    }));
     // Status bar
     const sb = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    sb.text = '$(shield) RakshakAI';
+    sb.text = '$(shield) Rakshak';
     sb.tooltip = 'Click to scan current file';
     sb.command = 'rakshakai.scanFile';
     sb.show();
     context.subscriptions.push(sb);
 }
-function deactivate() { }
+function deactivate() {
+    for (const controller of abortControllers.values()) {
+        controller.abort();
+    }
+    abortControllers.clear();
+    findingsCache.clear();
+}
