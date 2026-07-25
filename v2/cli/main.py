@@ -63,7 +63,7 @@ class ModelCompleter:
         "/batch", "/watch", "/watch-stop",
         "/diff", "/precommit", "/test", "/share",
         "/index", "/search",
-        "/history", "/log", "/stats",
+        "/history", "/log", "/stats", "/dashboard",
         "/confirm", "/dismiss", "/cost",
         "/clear", "/session", "/exit",
         "/agent", "/swarm", "/skills",
@@ -554,7 +554,18 @@ class RakshakREPL:
         return True
 
     def _handle_stats(self, args: str) -> bool:
-        show_stats_table(memory.get_stats())
+        """Display statistics - use /dashboard for interactive view."""
+        arg = args.strip().lower()
+        stats = memory.get_stats()
+        
+        if arg == "dashboard" or arg == "dash":
+            # Show interactive dashboard with visualizations
+            show_interactive_dashboard(stats)
+        else:
+            # Show traditional stats table
+            show_stats_table(stats)
+            console.print("\n[dim]💡 Tip: Use /stats dashboard for interactive visualizations[/]\n")
+        
         return True
 
     def _handle_parallel(self, args: str) -> bool:
@@ -1955,6 +1966,7 @@ dependencies = ["click"]
                     "/history": self._handle_history,
                     "/log": self._handle_log,
                     "/stats": self._handle_stats,
+                    "/dashboard": lambda a: self._handle_stats("dashboard"),
                     "/confirm": self._handle_confirm,
                     "/dismiss": self._handle_dismiss,
                     "/cost": self._handle_cost,
