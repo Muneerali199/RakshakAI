@@ -15,6 +15,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+
+def _extract_json(text: str) -> dict:
+    """Extract JSON object from LLM response text."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if "\n" in text:
+            text = text.split("\n", 1)[1]
+        if text.endswith("```"):
+            text = text[:-3]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+        return {"raw": text, "parse_error": True}
+
 SCAN_EXTS = {".c", ".h", ".cpp", ".cc", ".hpp", ".cxx", ".py", ".js", ".ts",
              ".java", ".rs", ".go", ".rb", ".php", ".swift", ".kt", ".cs"}
 
