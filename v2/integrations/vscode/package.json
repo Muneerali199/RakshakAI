@@ -1,102 +1,86 @@
 {
   "name": "rakshakai-v2",
   "displayName": "RakshakAI v2 — Security Copilot",
-  "description": "AI security reviewer powered by RakshakAI v2. Scans your code on save and reviews PR diffs.",
-  "version": "2.0.1",
+  "description": "AI security reviewer. Scans code on save, detects vulnerabilities, one-click AI fix.",
+  "version": "2.1.0",
   "publisher": "RakshakAI",
   "license": "Apache-2.0",
-  "engines": {
-    "vscode": "^1.86.0"
-  },
-  "categories": [
-    "Other",
-    "Linters",
-    "Programming Languages"
-  ],
-  "keywords": [
-    "security",
-    "vulnerability",
-    "cwe",
-    "sast",
-    "ai",
-    "code-review"
-  ],
+  "engines": { "vscode": "^1.86.0" },
+  "categories": ["Other", "Linters", "Programming Languages"],
+  "keywords": ["security", "vulnerability", "cwe", "sast", "ai", "code-review", "copilot"],
   "activationEvents": [
-    "onLanguage:python",
-    "onLanguage:javascript",
-    "onLanguage:typescript",
-    "onLanguage:java",
-    "onLanguage:go",
-    "onLanguage:rust",
-    "onLanguage:c",
-    "onLanguage:cpp",
-    "onLanguage:php",
-    "onLanguage:csharp",
-    "onLanguage:ruby"
+    "onLanguage:python", "onLanguage:javascript", "onLanguage:typescript",
+    "onLanguage:java", "onLanguage:go", "onLanguage:rust",
+    "onLanguage:c", "onLanguage:cpp", "onLanguage:php",
+    "onLanguage:csharp", "onLanguage:ruby"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "rakshak",
-          "title": "RakshakAI",
-          "icon": "$(shield)"
-        }
-      ]
+      "activitybar": [{ "id": "rakshak", "title": "RakshakAI", "icon": "$(shield)" }]
     },
     "views": {
       "rakshak": [
         {
           "id": "rakshak-files",
-          "name": "Scanned Files"
+          "name": "Findings",
+          "icon": "$(list-unordered)",
+          "contextualTitle": "RakshakAI"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "rakshak-files",
+        "contents": [
+          "### 🛡️ RakshakAI\nScanning your code for security vulnerabilities.\n\n[Scan Current File](command:rakshakai.scanFile)\n[Scan Workspace](command:rakshakai.scanWorkspace)\n[Open Dashboard](command:rakshakai.dashboard)\n[Choose Provider](command:rakshakai.chooseProvider)"
+        ]
+      }
+    ],
     "configuration": {
       "title": "RakshakAI v2",
       "properties": {
         "rakshakai.serverUrl": {
-          "type": "string",
-          "default": "http://localhost:8080",
-          "description": "URL of the running RakshakAI v2 server"
+          "type": "string", "default": "http://localhost:8080",
+          "description": "Server URL"
         },
         "rakshakai.scanOnSave": {
-          "type": "boolean",
-          "default": true,
-          "description": "Scan the active editor on save"
+          "type": "boolean", "default": true,
+          "description": "Scan on save"
         },
         "rakshakai.severityFilter": {
-          "type": "array",
-          "default": ["critical", "high", "medium"],
-          "description": "Show diagnostics only at these severities"
+          "type": "array", "default": ["critical", "high", "medium"],
+          "description": "Severity filter"
         },
         "rakshakai.minConfidence": {
-          "type": "number",
-          "default": 0.6,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Hide findings below this confidence"
+          "type": "number", "default": 0.6, "minimum": 0, "maximum": 1,
+          "description": "Min confidence"
+        },
+        "rakshakai.provider": {
+          "type": "string", "default": "ollama",
+          "enum": ["ollama", "groq", "fireworks", "nebius", "huggingface"],
+          "enumDescriptions": [
+            "Local Ollama (free, private)",
+            "Groq (fast, free tier)",
+            "Fireworks AI (paid)",
+            "Nebius AI (Kimi K2.7, Qwen 3.5)",
+            "HuggingFace (free tier)"
+          ],
+          "description": "LLM provider"
+        },
+        "rakshakai.model": {
+          "type": "string", "default": "",
+          "description": "Model ID override"
         }
       }
     },
     "commands": [
-      {
-        "command": "rakshakai.scanFile",
-        "title": "RakshakAI: Scan Current File"
-      },
-      {
-        "command": "rakshakai.scanWorkspace",
-        "title": "RakshakAI: Scan Workspace"
-      },
-      {
-        "command": "rakshakai.showLastFinding",
-        "title": "RakshakAI: Show Last Finding"
-      },
-      {
-        "command": "rakshakai.applyPatch",
-        "title": "RakshakAI: Apply Suggested Patch"
-      }
+      { "command": "rakshakai.scanFile", "title": "Scan Current File", "icon": "$(search)" },
+      { "command": "rakshakai.scanWorkspace", "title": "Scan Workspace", "icon": "$(folder-opened)" },
+      { "command": "rakshakai.dashboard", "title": "Open Dashboard", "icon": "$(graph)" },
+      { "command": "rakshakai.chooseProvider", "title": "Choose Provider & Model", "icon": "$(settings-gear)" },
+      { "command": "rakshakai.showLastFinding", "title": "Show Last Finding", "icon": "$(info)" },
+      { "command": "rakshakai.applyPatch", "title": "Apply Suggested Patch", "icon": "$(code)" }
     ]
   },
   "scripts": {
