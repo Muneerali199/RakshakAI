@@ -74,6 +74,16 @@ class NotionSync:
             self._save_state()
             return ""
 
+        if not self.database.database_id:
+            log.warning("No Notion database_id set — queuing report")
+            self._sync_queue.append({
+                "report": report.__dict__,
+                "action": "create",
+                "queued_at": datetime.utcnow().isoformat(),
+            })
+            self._save_state()
+            return ""
+
         children = self.builder.build_report_page(report)
         page_id = self.database.add_vulnerability(report, children)
         self._emit("on_create", {"page_id": page_id, "report": report})

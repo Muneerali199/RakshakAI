@@ -119,7 +119,7 @@ async def notion_health():
 @router.post("/setup")
 async def setup_security_center(req: SetupRequest):
     if not get_client().is_configured:
-        raise HTTPException(400, "Notion not configured. Set NOTION_API_KEY in .env")
+        raise HTTPException(400, "Notion not configured. Set NOTION_TOKEN in .env")
     db_id = get_db().create_security_center(req.parent_page_id)
     return {"database_id": db_id, "message": "Security Center created"}
 
@@ -222,40 +222,10 @@ async def get_dashboard():
     return {"stats": stats, "blocks": blocks}
 
 
-@router.get("/authorize")
-async def authorize_notion():
-    client = get_client()
-    if not client.config.oauth_client_id:
-        raise HTTPException(400, "OAuth not configured. Set NOTION_OAUTH_CLIENT_ID")
-    url = client.get_oauth_authorize_url(state="rakshakai")
-    return {"authorize_url": url}
-
-
-@router.get("/callback")
-async def notion_callback(code: str = Query(...)):
-    client = get_client()
-    try:
-        token_data = client.exchange_code(code)
-        return {
-            "workspace": token_data.get("workspace_name"),
-            "bot_id": token_data.get("bot_id"),
-            "message": "Notion connected successfully",
-        }
-    except Exception as e:
-        raise HTTPException(400, f"OAuth failed: {e}")
-
-
 @router.post("/webhook")
 async def notion_webhook(request: Request):
     body = await request.body()
     event = await request.json()
     event_type = event.get("type", "")
     log.info(f"Notion webhook: {event_type}")
-
-    if event_type == "page.properties_updated":
-        page_id = event.get("data", {}).get("page", {}).get("id", "")
-        log.info(f"Page updated: {page_id}")
-    elif event_type == "page.created":
-        log.info("New page created in Notion")
-
     return {"received": True}

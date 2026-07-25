@@ -16,7 +16,7 @@ class NotionDatabase:
 
     def __init__(self, client: NotionClient):
         self.client = client
-        self._database_id = client.config.database_id
+        self._database_id = client.database_id
 
     @property
     def database_id(self) -> str:
@@ -25,7 +25,7 @@ class NotionDatabase:
     @database_id.setter
     def database_id(self, value: str):
         self._database_id = value
-        self.client.config.database_id = value
+        self.client.database_id = value
 
     def create_security_center(self, parent_page_id: str) -> str:
         schema = DatabaseSchema()
