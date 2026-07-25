@@ -90,25 +90,12 @@ class VulnerabilityReport:
 
     def to_notion_properties(self) -> dict:
         props = {
-            "Title": {"title": [{"text": {"content": self.title}}]},
+            "Name": {"title": [{"text": {"content": self.title}}]},
             "Severity": {"select": {"name": self.severity.value}},
             "Status": {"select": {"name": self.status.value}},
-            "Confidence": {"number": round(self.confidence, 2)},
-            "Security Score": {"number": round(self.security_score, 1)},
+            "CWE": {"rich_text": [{"text": {"content": self.cwe_id}}]},
             "Language": {"select": {"name": self.language or "Unknown"}},
-            "Repository": {"rich_text": [{"text": {"content": self.repository}}]},
-            "File Path": {"rich_text": [{"text": {"content": self.file_path}}]},
-            "Line Number": {"number": self.line_number},
-            "CWE ID": {"rich_text": [{"text": {"content": self.cwe_id}}]},
-            "OWASP": {"select": {"name": self.owasp_category or "Unknown"}},
-            "Vulnerability Type": {"select": {"name": self.vulnerability_type or "Unknown"}},
-            "Assignee": {"rich_text": [{"text": {"content": self.assignee}}]},
-            "Detected Date": {"date": {"start": self.detected_at}},
-            "Updated Date": {"date": {"start": self.updated_at}},
-            "Tags": {"multi_select": [{"name": t} for t in self.tags[:10]]},
         }
-        if self.due_date:
-            props["Due Date"] = {"date": {"start": self.due_date}}
         return props
 
 
