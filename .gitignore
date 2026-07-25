@@ -38,3 +38,4 @@ venv/
 /tmp/
 node_modules/
 .env
+v2/model/rakshak_sft_fixed/

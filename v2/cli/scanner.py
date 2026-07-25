@@ -480,14 +480,46 @@ def scan_code_quick(
     max_tokens: int = 4096,
 ) -> dict:
     """Single-pass scan without voting — for batch/CI where speed matters."""
+    import requests as _req
+    lang = language or "c"
+
+    static_findings = static_scan(code, language=lang)
+
+    # Try server first, fall back to direct LLM
+    try:
+        resp = _req.post(
+            "http://localhost:8080/v2/scan",
+            json={"code": code, "language": lang},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            f = data.get("finding", {})
+            if f.get("cwe"):
+                merged = {f["cwe"]: {
+                    "cwe": f["cwe"],
+                    "severity": f.get("severity", "medium"),
+                    "confidence": f.get("confidence", 0.8),
+                    "description": f.get("root_cause", ""),
+                    "remediation": f.get("secure_fix", ""),
+                    "vulnerable_code": "",
+                    "fixed_code": f.get("patched_code", ""),
+                }}
+                vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
+                return {
+                    "vulnerabilities": vuln_list,
+                    "summary": f"Found 1 issue(s): {f['cwe']}",
+                    "_raw": str(f),
+                }
+    except Exception:
+        pass
+
+    # Fallback to direct LLM
     from v2.cli.llm import chat_sync as _chat_sync
     from v2.cli.prompts import get_scan_messages as _get_scan
     cfg = _get_model_config(model)
     if not cfg:
-        cfg = _get_model_config("deepseek")
-    lang = language or "c"
-
-    static_findings = static_scan(code, language=lang)
+        cfg = _get_model_config("groq-llama-70b")
     messages = _get_scan(f"```{lang}\n{code}\n```", model, language=lang)
     response = _chat_sync(messages, cfg, max_tokens=max_tokens)
     data = _extract_json(response)

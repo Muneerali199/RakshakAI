@@ -74,6 +74,15 @@ class GenerateRequest(BaseModel):
     language: str = Field("python")
 
 
+class FixRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=200_000)
+    language: str = Field("python")
+    vulnerability: str = Field("", description="What the vulnerability is")
+    cwe: str = Field("", description="CWE ID like CWE-78")
+    root_cause: str = Field("", description="Why it's vulnerable")
+    filename: str | None = None
+
+
 class BatchScanRequest(BaseModel):
     items: list[ScanRequest] = Field(..., min_length=1, max_length=64)
 
@@ -325,12 +334,35 @@ async def generate_secure(req: GenerateRequest) -> ScanResponse:
         f"called `patched_code`.\n\nRequirement:\n{req.prompt}"
     )
     obj, dt = STATE.generate(user)
-    # synthesize a Finding for the response
     return ScanResponse(
         finding=_normalize(obj),
         engine="v2-llm",
         latency_ms=dt * 1000,
     )
+
+
+@app.post("/v2/fix")
+async def fix_vulnerability(req: FixRequest) -> dict:
+    user = (
+        f"You are a security code fixer. The following {req.language} code has a vulnerability.\n\n"
+        f"VULNERABILITY: {req.vulnerability}\n"
+        f"CWE: {req.cwe}\n"
+        f"ROOT CAUSE: {req.root_cause}\n\n"
+        f"VULNERABLE CODE:\n```{req.language}\n{req.code}\n```\n\n"
+        f"Return ONLY a JSON object with these fields:\n"
+        f'{{"patched_code": "<the fixed code>", "explanation": "<brief explanation of the fix>"}}\n\n'
+        f"Rules:\n"
+        f"- Output ONLY valid JSON, no markdown, no explanation outside JSON\n"
+        f"- The patched_code must be the COMPLETE fixed file, not a snippet\n"
+        f"- Preserve the original code structure and style\n"
+        f"- Apply security best practices for the fix"
+    )
+    obj, dt = STATE.generate(user)
+    return {
+        "patched_code": obj.get("patched_code", ""),
+        "explanation": obj.get("explanation", obj.get("secure_fix", "")),
+        "latency_ms": dt * 1000,
+    }
 
 
 @app.post("/v2/batch")

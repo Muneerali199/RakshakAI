@@ -117,7 +117,9 @@ class ModelCompleter:
             except (OSError, ValueError):
                 pass
 
-
+    async def get_completions_async(self, document, complete_event):
+        for c in self.get_completions(document, complete_event):
+            yield c
 
 
 
