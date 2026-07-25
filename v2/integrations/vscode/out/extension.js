@@ -71,62 +71,487 @@ function getDashboardHtml(findings, provider) {
     const medium = findings.filter(f => f.finding.severity === 'medium').length;
     const low = findings.filter(f => f.finding.severity === 'low').length;
     const total = findings.length;
-    const findingCards = findings.map(f => {
+    const findingCards = findings.map((f, idx) => {
         const sevColor = {
             critical: '#ef4444', high: '#f97316', medium: '#eab308', low: '#3b82f6', info: '#6b7280'
         };
         const sevBg = {
-            critical: 'rgba(239,68,68,0.1)', high: 'rgba(249,115,22,0.1)', medium: 'rgba(234,179,8,0.1)',
-            low: 'rgba(59,130,246,0.1)', info: 'rgba(107,114,128,0.1)'
+            critical: 'rgba(239,68,68,0.08)', high: 'rgba(249,115,22,0.08)', medium: 'rgba(234,179,8,0.08)',
+            low: 'rgba(59,130,246,0.08)', info: 'rgba(107,114,128,0.08)'
         };
         const sev = f.finding.severity || 'info';
         const fileShort = f.file.split('/').pop() || f.file;
+        const filePath = f.file.split('/').slice(-3).join('/');
         return `
-      <div style="background:${sevBg[sev]};border:1px solid ${sevColor[sev]}40;border-radius:10px;padding:14px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="color:${sevColor[sev]};font-weight:700;font-size:13px;text-transform:uppercase">${sev}</span>
-          <span style="color:#888;font-size:11px">${f.finding.cwe || ''}</span>
+      <div class="finding-card" style="animation-delay: ${idx * 0.05}s">
+        <div class="finding-header">
+          <div class="severity-badge ${sev}">${sev}</div>
+          <div class="cwe-badge">${escapeHtml(f.finding.cwe || '')}</div>
         </div>
-        <div style="color:#e5e5e5;font-size:13px;font-weight:600;margin-bottom:4px">${escapeHtml(f.finding.vulnerability || 'Unknown')}</div>
-        <div style="color:#aaa;font-size:11px">${escapeHtml(fileShort)}</div>
-        ${f.finding.secure_fix ? `<div style="color:#4ade80;font-size:11px;margin-top:6px">💡 ${escapeHtml(f.finding.secure_fix.slice(0, 120))}</div>` : ''}
+        <div class="finding-title">${escapeHtml(f.finding.vulnerability || 'Unknown')}</div>
+        <div class="finding-file">
+          <span class="file-icon">📄</span>
+          <span>${escapeHtml(filePath)}</span>
+        </div>
+        ${f.finding.confidence ? `
+          <div class="confidence-meter">
+            <div class="confidence-label">Confidence: ${(f.finding.confidence * 100).toFixed(0)}%</div>
+            <div class="confidence-bar">
+              <div class="confidence-fill" style="width: ${(f.finding.confidence * 100)}%"></div>
+            </div>
+          </div>
+        ` : ''}
+        ${f.finding.root_cause ? `
+          <div class="finding-detail">
+            <strong>Root Cause:</strong> ${escapeHtml(f.finding.root_cause.slice(0, 150))}${f.finding.root_cause.length > 150 ? '...' : ''}
+          </div>
+        ` : ''}
+        ${f.finding.secure_fix ? `
+          <div class="finding-fix">
+            <span class="fix-icon">💡</span>
+            <span>${escapeHtml(f.finding.secure_fix.slice(0, 120))}${f.finding.secure_fix.length > 120 ? '...' : ''}</span>
+          </div>
+        ` : ''}
       </div>`;
     }).join('');
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e5e5e5; padding: 24px; }
-    .header { text-align: center; margin-bottom: 28px; }
-    .logo { font-size: 42px; margin-bottom: 4px; }
-    h1 { font-size: 22px; font-weight: 800; background: linear-gradient(135deg, #4ade80, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .subtitle { color: #888; font-size: 12px; margin-top: 4px; }
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
-    .stat { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; text-align: center; }
-    .stat-num { font-size: 28px; font-weight: 800; }
-    .stat-label { font-size: 11px; color: #888; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .stat-critical .stat-num { color: #ef4444; }
-    .stat-high .stat-num { color: #f97316; }
-    .stat-medium .stat-num { color: #eab308; }
-    .stat-total .stat-num { color: #4ade80; }
-    .section-title { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; font-weight: 600; }
-    .provider-badge { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 20px; padding: 6px 14px; font-size: 12px; color: #9ca3af; margin-bottom: 20px; }
-    .provider-badge span { color: #4ade80; font-weight: 600; }
-    .empty { text-align: center; padding: 48px; color: #555; }
-    .empty-icon { font-size: 48px; margin-bottom: 12px; }
+    * { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box; 
+    }
+    
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+      background: #0d1117; 
+      color: #e5e5e5; 
+      padding: 32px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 768px) {
+      body { padding: 16px; }
+    }
+    
+    .header { 
+      text-align: center; 
+      margin-bottom: 40px;
+      animation: fadeInDown 0.6s ease;
+    }
+    
+    @keyframes fadeInDown {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    
+    .logo { 
+      font-size: 64px; 
+      margin-bottom: 12px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    
+    h1 { 
+      font-size: 32px; 
+      font-weight: 900; 
+      background: linear-gradient(135deg, #4ade80, #22d3ee, #a78bfa); 
+      -webkit-background-clip: text; 
+      -webkit-text-fill-color: transparent;
+      background-size: 200% auto;
+      animation: gradient 3s ease infinite;
+      margin-bottom: 8px;
+    }
+
+    @keyframes gradient {
+      0%, 100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+    }
+    
+    .subtitle { 
+      color: #8b949e; 
+      font-size: 14px; 
+      letter-spacing: 0.5px;
+    }
+    
+    .meta-bar {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 36px;
+      flex-wrap: wrap;
+      animation: fadeInUp 0.6s ease 0.2s both;
+    }
+
+    .provider-badge, .scan-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #161b22; 
+      border: 1px solid #30363d; 
+      border-radius: 20px; 
+      padding: 8px 18px; 
+      font-size: 13px; 
+      color: #8b949e;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      animation: blink 1.5s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .provider-badge .value, .scan-badge .value { 
+      color: #4ade80; 
+      font-weight: 700; 
+    }
+    
+    .stats { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); 
+      gap: 16px; 
+      margin-bottom: 40px;
+      animation: fadeInUp 0.6s ease 0.3s both;
+    }
+
+    @media (max-width: 600px) {
+      .stats {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+    }
+    
+    .stat { 
+      background: #161b22; 
+      border: 1px solid #30363d; 
+      border-radius: 12px; 
+      padding: 24px 20px; 
+      text-align: center;
+      transition: all 0.3s ease;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--stat-color);
+      transform: scaleX(0);
+      transition: transform 0.3s ease;
+    }
+
+    .stat:hover::before {
+      transform: scaleX(1);
+    }
+    
+    .stat:hover { 
+      border-color: var(--stat-color);
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    
+    .stat-num { 
+      font-size: 42px; 
+      font-weight: 900; 
+      line-height: 1;
+      color: var(--stat-color);
+      margin-bottom: 8px;
+    }
+    
+    .stat-label { 
+      font-size: 12px; 
+      color: #8b949e; 
+      text-transform: uppercase; 
+      letter-spacing: 1px; 
+      font-weight: 600; 
+    }
+    
+    .stat-critical { --stat-color: #ef4444; }
+    .stat-high { --stat-color: #f97316; }
+    .stat-medium { --stat-color: #eab308; }
+    .stat-total { --stat-color: #4ade80; }
+    
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      animation: fadeInUp 0.6s ease 0.4s both;
+    }
+
+    .section-title { 
+      color: #c9d1d9; 
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .findings-count {
+      background: #21262d;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #4ade80;
+    }
+
+    .findings-grid {
+      display: grid;
+      gap: 16px;
+      animation: fadeInUp 0.6s ease 0.5s both;
+    }
+
+    .finding-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 20px;
+      transition: all 0.3s ease;
+      animation: slideIn 0.5s ease both;
+    }
+
+    .finding-card:hover {
+      border-color: #4ade80;
+      transform: translateX(4px);
+      box-shadow: 0 4px 16px rgba(74,222,128,0.1);
+    }
+
+    .finding-header {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .severity-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .severity-badge.critical {
+      background: rgba(239,68,68,0.15);
+      color: #ef4444;
+      border: 1px solid #ef444440;
+    }
+
+    .severity-badge.high {
+      background: rgba(249,115,22,0.15);
+      color: #f97316;
+      border: 1px solid #f9731640;
+    }
+
+    .severity-badge.medium {
+      background: rgba(234,179,8,0.15);
+      color: #eab308;
+      border: 1px solid #eab30840;
+    }
+
+    .severity-badge.low {
+      background: rgba(59,130,246,0.15);
+      color: #3b82f6;
+      border: 1px solid #3b82f640;
+    }
+
+    .cwe-badge {
+      background: #21262d;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      color: #8b949e;
+      font-family: 'SF Mono', monospace;
+    }
+
+    .finding-title {
+      color: #e5e5e5;
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
+
+    .finding-file {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #8b949e;
+      font-size: 12px;
+      margin-bottom: 12px;
+      font-family: 'SF Mono', monospace;
+    }
+
+    .file-icon {
+      font-size: 14px;
+    }
+
+    .confidence-meter {
+      margin-bottom: 12px;
+    }
+
+    .confidence-label {
+      font-size: 11px;
+      color: #8b949e;
+      margin-bottom: 4px;
+    }
+
+    .confidence-bar {
+      height: 4px;
+      background: #21262d;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .confidence-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4ade80, #22d3ee);
+      border-radius: 2px;
+      transition: width 0.8s ease;
+    }
+
+    .finding-detail {
+      background: #0d111780;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #c9d1d9;
+      margin-bottom: 10px;
+      line-height: 1.5;
+      border-left: 2px solid #30363d;
+    }
+
+    .finding-detail strong {
+      color: #f97316;
+    }
+
+    .finding-fix {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      background: rgba(74,222,128,0.08);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #4ade80;
+      border-left: 2px solid #4ade80;
+      line-height: 1.5;
+    }
+
+    .fix-icon {
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    
+    .empty { 
+      text-align: center; 
+      padding: 80px 24px; 
+      color: #8b949e;
+      animation: fadeInUp 0.6s ease both;
+    }
+    
+    .empty-icon { 
+      font-size: 72px; 
+      margin-bottom: 20px;
+      animation: bounce 2s ease-in-out infinite;
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    .empty-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #4ade80;
+      margin-bottom: 8px;
+    }
+
+    .empty-text {
+      font-size: 14px;
+      color: #8b949e;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="logo">🛡️</div>
     <h1>RakshakAI Dashboard</h1>
-    <div class="subtitle">Security Code Analysis</div>
+    <div class="subtitle">Security Code Analysis Report</div>
   </div>
 
-  <div style="text-align:center">
-    <div class="provider-badge">Provider: <span>${provider}</span> &nbsp;|&nbsp; Scans: <span>${totalScans}</span></div>
+  <div class="meta-bar">
+    <div class="provider-badge">
+      <span class="status-dot"></span>
+      <span>Provider:</span>
+      <span class="value">${provider}</span>
+    </div>
+    <div class="scan-badge">
+      <span>Total Scans:</span>
+      <span class="value">${totalScans}</span>
+    </div>
   </div>
 
   <div class="stats">
@@ -144,16 +569,26 @@ function getDashboardHtml(findings, provider) {
     </div>
     <div class="stat stat-total">
       <div class="stat-num">${total}</div>
-      <div class="stat-label">Total</div>
+      <div class="stat-label">Total Findings</div>
     </div>
   </div>
 
-  <div class="section-title">Findings</div>
-  ${total > 0 ? findingCards : `
+  ${total > 0 ? `
+    <div class="section-header">
+      <div class="section-title">
+        <span>🔍</span>
+        <span>Vulnerability Findings</span>
+      </div>
+      <div class="findings-count">${total} ${total === 1 ? 'issue' : 'issues'}</div>
+    </div>
+    <div class="findings-grid">
+      ${findingCards}
+    </div>
+  ` : `
     <div class="empty">
       <div class="empty-icon">✅</div>
-      <div>No vulnerabilities found</div>
-      <div style="font-size:12px;color:#555;margin-top:4px">Your code looks secure!</div>
+      <div class="empty-title">No Vulnerabilities Detected</div>
+      <div class="empty-text">Your codebase is secure and looking great!</div>
     </div>
   `}
 </body>
@@ -356,34 +791,476 @@ function applyPatchCommand(diag) {
     fix.command = { title: 'Fix', command: 'rakshakai.fixIssue', arguments: [diag] };
     return fix;
 }
+function createNotionReportCommand(diag) {
+    const action = new vscode.CodeAction('📋 Create Notion Report', vscode.CodeActionKind.QuickFix);
+    action.diagnostics = [diag];
+    action.command = { title: 'Notion Report', command: 'rakshakai.notionReport', arguments: [diag] };
+    return action;
+}
 // ─── Tree View ───
+class FindingTreeItem extends vscode.TreeItem {
+    label;
+    collapsibleState;
+    severity;
+    uri;
+    diagnostic;
+    constructor(label, collapsibleState, severity, uri, diagnostic) {
+        super(label, collapsibleState);
+        this.label = label;
+        this.collapsibleState = collapsibleState;
+        this.severity = severity;
+        this.uri = uri;
+        this.diagnostic = diagnostic;
+    }
+}
 class RakshakTreeProvider {
     _onDidChangeTreeData = new vscode.EventEmitter();
     onDidChangeTreeData = this._onDidChangeTreeData.event;
     refresh() { this._onDidChangeTreeData.fire(undefined); }
     getTreeItem(el) { return el; }
-    getChildren() {
-        const items = [];
-        const allDiags = vscode.languages.getDiagnostics();
-        let count = 0;
-        for (const [uri, diagList] of allDiags) {
-            const rakshakDiags = diagList.filter(d => d.source === RAKSHAK_DIAG);
-            if (rakshakDiags.length === 0)
-                continue;
-            count += rakshakDiags.length;
-            const fileItem = new vscode.TreeItem(uri.fsPath.split('/').pop() || uri.fsPath);
-            fileItem.resourceUri = uri;
-            fileItem.iconPath = new vscode.ThemeIcon('file-code');
-            fileItem.command = { command: 'vscode.open', title: 'Open', arguments: [uri] };
-            fileItem.description = `${rakshakDiags.length} issue(s)`;
-            items.push(fileItem);
+    getChildren(element) {
+        if (!element) {
+            // Root level: show severity groups
+            return this.getSeverityGroups();
         }
-        if (items.length === 0) {
-            const welcome = new vscode.TreeItem('No findings — code is secure ✅');
-            welcome.iconPath = new vscode.ThemeIcon('check');
-            items.push(welcome);
+        else if (element.severity) {
+            // Severity group: show files
+            return this.getFilesForSeverity(element.severity);
+        }
+        else if (element.uri) {
+            // File: show individual findings
+            return this.getFindingsForFile(element.uri);
+        }
+        return [];
+    }
+    getSeverityGroups() {
+        const allDiags = vscode.languages.getDiagnostics();
+        const severityCounts = {
+            critical: 0, high: 0, medium: 0, low: 0, info: 0
+        };
+        for (const [_, diagList] of allDiags) {
+            for (const d of diagList.filter(d => d.source === RAKSHAK_DIAG)) {
+                const f = findingsCache.get(_.toString());
+                const sev = f?.severity || 'info';
+                severityCounts[sev]++;
+            }
+        }
+        const groups = [];
+        const total = Object.values(severityCounts).reduce((a, b) => a + b, 0);
+        if (total === 0) {
+            const welcome = new FindingTreeItem('✅ No vulnerabilities found', vscode.TreeItemCollapsibleState.None);
+            welcome.iconPath = new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'));
+            return [welcome];
+        }
+        const severityConfig = [
+            { key: 'critical', label: 'Critical', icon: 'error', color: 'errorForeground' },
+            { key: 'high', label: 'High', icon: 'warning', color: 'editorWarning.foreground' },
+            { key: 'medium', label: 'Medium', icon: 'info', color: 'editorInfo.foreground' },
+            { key: 'low', label: 'Low', icon: 'issue-opened', color: 'foreground' }
+        ];
+        for (const cfg of severityConfig) {
+            const count = severityCounts[cfg.key];
+            if (count > 0) {
+                const item = new FindingTreeItem(`${cfg.label} (${count})`, vscode.TreeItemCollapsibleState.Expanded, cfg.key);
+                item.iconPath = new vscode.ThemeIcon(cfg.icon, new vscode.ThemeColor(cfg.color));
+                item.contextValue = 'severityGroup';
+                groups.push(item);
+            }
+        }
+        return groups;
+    }
+    getFilesForSeverity(severity) {
+        const allDiags = vscode.languages.getDiagnostics();
+        const items = [];
+        for (const [uri, diagList] of allDiags) {
+            const matchingDiags = diagList.filter(d => {
+                if (d.source !== RAKSHAK_DIAG)
+                    return false;
+                const f = findingsCache.get(uri.toString());
+                return f?.severity === severity;
+            });
+            if (matchingDiags.length > 0) {
+                const fileName = uri.fsPath.split('/').pop() || uri.fsPath;
+                const item = new FindingTreeItem(fileName, vscode.TreeItemCollapsibleState.Collapsed, severity, uri);
+                item.iconPath = new vscode.ThemeIcon('file-code');
+                item.description = `${matchingDiags.length} issue${matchingDiags.length > 1 ? 's' : ''}`;
+                item.resourceUri = uri;
+                item.command = { command: 'vscode.open', title: 'Open', arguments: [uri] };
+                item.contextValue = 'findingFile';
+                items.push(item);
+            }
         }
         return items;
+    }
+    getFindingsForFile(uri) {
+        const diagList = vscode.languages.getDiagnostics(uri);
+        const items = [];
+        for (const d of diagList.filter(d => d.source === RAKSHAK_DIAG)) {
+            const f = findingsCache.get(uri.toString());
+            const label = f?.vulnerability || d.message.split('|')[2]?.trim() || 'Unknown';
+            const cwe = f?.cwe || d.code || '';
+            const item = new FindingTreeItem(label, vscode.TreeItemCollapsibleState.None, f?.severity || undefined, uri, d);
+            item.iconPath = new vscode.ThemeIcon('bug');
+            item.description = String(cwe);
+            item.tooltip = d.message;
+            item.command = {
+                command: 'rakshakai.showFindingDetails',
+                title: 'Show Details',
+                arguments: [uri, d]
+            };
+            item.contextValue = 'finding';
+            items.push(item);
+        }
+        return items;
+    }
+}
+// ─── Sidebar Webview Panel ───
+class RakshakSidebarProvider {
+    _extensionUri;
+    constructor(_extensionUri) {
+        this._extensionUri = _extensionUri;
+    }
+    resolveWebviewView(webviewView, _context, _token) {
+        webviewView.webview.options = { enableScripts: true };
+        webviewView.webview.html = this.getHtmlContent();
+        // Handle messages from webview
+        webviewView.webview.onDidReceiveMessage(async (message) => {
+            switch (message.command) {
+                case 'scanFile':
+                    vscode.commands.executeCommand('rakshakai.scanFile');
+                    break;
+                case 'scanWorkspace':
+                    vscode.commands.executeCommand('rakshakai.scanWorkspace');
+                    break;
+                case 'dashboard':
+                    vscode.commands.executeCommand('rakshakai.dashboard');
+                    break;
+                case 'chooseProvider':
+                    vscode.commands.executeCommand('rakshakai.chooseProvider');
+                    break;
+            }
+        });
+    }
+    getHtmlContent() {
+        const allDiags = vscode.languages.getDiagnostics();
+        let critical = 0, high = 0, medium = 0, low = 0;
+        for (const [_, diagList] of allDiags) {
+            for (const d of diagList.filter(d => d.source === RAKSHAK_DIAG)) {
+                const f = findingsCache.get(_.toString());
+                const sev = f?.severity || 'info';
+                if (sev === 'critical')
+                    critical++;
+                else if (sev === 'high')
+                    high++;
+                else if (sev === 'medium')
+                    medium++;
+                else if (sev === 'low')
+                    low++;
+            }
+        }
+        const total = critical + high + medium + low;
+        const cfg = getConfig();
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      color: var(--vscode-foreground);
+      background: var(--vscode-sideBar-background);
+      padding: 16px 12px;
+      line-height: 1.5;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+
+    .logo {
+      font-size: 48px;
+      margin-bottom: 8px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    .title {
+      font-size: 18px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #4ade80, #22d3ee);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.8;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .stat-card:hover {
+      border-color: var(--vscode-focusBorder);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+
+    .stat-number {
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      opacity: 0.7;
+      font-weight: 600;
+    }
+
+    .stat-critical .stat-number { color: #ef4444; }
+    .stat-high .stat-number { color: #f97316; }
+    .stat-medium .stat-number { color: #eab308; }
+    .stat-total .stat-number { color: #4ade80; }
+
+    .progress-bar {
+      height: 6px;
+      background: var(--vscode-editor-background);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4ade80, #22d3ee);
+      transition: width 0.3s ease;
+      animation: shimmer 2s infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -100% 0; }
+      100% { background-position: 100% 0; }
+    }
+
+    .action-section {
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+
+    .action-btn {
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .action-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    .action-btn:active {
+      transform: translateY(0);
+    }
+
+    .action-btn.secondary {
+      background: var(--vscode-editor-background);
+      color: var(--vscode-foreground);
+      border: 1px solid var(--vscode-panel-border);
+    }
+
+    .action-btn.secondary:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .provider-info {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 11px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .provider-label {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .provider-value {
+      color: #4ade80;
+      font-weight: 600;
+    }
+
+    .status-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      margin-right: 6px;
+      animation: blink 1.5s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    @media (max-width: 300px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">🛡️</div>
+    <div class="title">RakshakAI</div>
+    <div class="subtitle">Security Code Scanner</div>
+  </div>
+
+  <div class="provider-info">
+    <span class="provider-label">
+      <span class="status-indicator"></span>Provider
+    </span>
+    <span class="provider-value">${cfg.provider}</span>
+  </div>
+
+  ${total > 0 ? `
+    <div class="stats-grid">
+      <div class="stat-card stat-critical">
+        <div class="stat-number">${critical}</div>
+        <div class="stat-label">Critical</div>
+      </div>
+      <div class="stat-card stat-high">
+        <div class="stat-number">${high}</div>
+        <div class="stat-label">High</div>
+      </div>
+      <div class="stat-card stat-medium">
+        <div class="stat-number">${medium}</div>
+        <div class="stat-label">Medium</div>
+      </div>
+      <div class="stat-card stat-total">
+        <div class="stat-number">${total}</div>
+        <div class="stat-label">Total</div>
+      </div>
+    </div>
+
+    <div class="progress-bar">
+      <div class="progress-fill" style="width: ${Math.min(100, (critical + high) * 10)}%"></div>
+    </div>
+  ` : `
+    <div class="empty-state">
+      <div class="empty-icon">✅</div>
+      <div>No vulnerabilities detected</div>
+      <div style="font-size: 10px; margin-top: 4px; opacity: 0.6;">Your code is secure!</div>
+    </div>
+  `}
+
+  <div class="action-section">
+    <div class="section-title">Quick Actions</div>
+    <button class="action-btn" onclick="scanFile()">
+      <span>🔍</span>
+      <span>Scan Current File</span>
+    </button>
+    <button class="action-btn secondary" onclick="scanWorkspace()">
+      <span>📂</span>
+      <span>Scan Workspace</span>
+    </button>
+    <button class="action-btn secondary" onclick="openDashboard()">
+      <span>📊</span>
+      <span>Open Dashboard</span>
+    </button>
+  </div>
+
+  <div class="action-section">
+    <div class="section-title">Settings</div>
+    <button class="action-btn secondary" onclick="chooseProvider()">
+      <span>⚙️</span>
+      <span>Change Provider</span>
+    </button>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    function scanFile() { vscode.postMessage({ command: 'scanFile' }); }
+    function scanWorkspace() { vscode.postMessage({ command: 'scanWorkspace' }); }
+    function openDashboard() { vscode.postMessage({ command: 'dashboard' }); }
+    function chooseProvider() { vscode.postMessage({ command: 'chooseProvider' }); }
+  </script>
+</body>
+</html>`;
     }
 }
 // ─── Activate ───
@@ -391,12 +1268,17 @@ function activate(context) {
     const diagnosticCollection = vscode.languages.createDiagnosticCollection(RAKSHAK_DIAG);
     const treeProvider = new RakshakTreeProvider();
     vscode.window.registerTreeDataProvider('rakshak-files', treeProvider);
+    // Register sidebar webview provider
+    const sidebarProvider = new RakshakSidebarProvider(context.extensionUri);
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider('rakshak-sidebar', sidebarProvider));
     const cfg = getConfig();
     // ─── Commands ───
-    context.subscriptions.push(vscode.commands.registerCommand('rakshakai.scanFile', () => {
+    context.subscriptions.push(vscode.commands.registerCommand('rakshakai.scanFile', async () => {
         const ed = vscode.window.activeTextEditor;
-        if (ed)
-            scanDocument(ed.document);
+        if (ed) {
+            await scanDocument(ed.document);
+            treeProvider.refresh();
+        }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.scanWorkspace', async () => {
         const docs = vscode.workspace.textDocuments;
@@ -405,6 +1287,161 @@ function activate(context) {
                 await scanDocument(d);
             treeProvider.refresh();
         });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('rakshakai.showFindingDetails', (uri, diag) => {
+        const f = findingsCache.get(uri.toString());
+        if (!f) {
+            vscode.window.showInformationMessage('No detailed information available.');
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel('rakshakai-details', `🛡️ ${f.vulnerability}`, vscode.ViewColumn.Beside, { enableScripts: false });
+        panel.webview.html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+      background: #0d1117; 
+      color: #e5e5e5; 
+      padding: 24px;
+      line-height: 1.6;
+    }
+    .header {
+      background: linear-gradient(135deg, #ef444420, #f9731620);
+      border: 1px solid ${f.severity === 'critical' ? '#ef4444' : '#f97316'}40;
+      border-left: 4px solid ${f.severity === 'critical' ? '#ef4444' : '#f97316'};
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+    }
+    .severity {
+      display: inline-block;
+      background: ${f.severity === 'critical' ? '#ef4444' : f.severity === 'high' ? '#f97316' : '#eab308'};
+      color: white;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-size: 24px;
+      color: #e5e5e5;
+      margin-bottom: 8px;
+    }
+    .cwe {
+      color: #888;
+      font-size: 13px;
+    }
+    .section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      padding: 18px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      color: #4ade80;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+    .content {
+      color: #c9d1d9;
+      font-size: 14px;
+    }
+    .code {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      padding: 14px;
+      border-radius: 6px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: #4ade80;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .confidence {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .confidence-bar {
+      flex: 1;
+      height: 8px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .confidence-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4ade80, #22d3ee);
+      width: ${(f.confidence * 100).toFixed(0)}%;
+    }
+    .confidence-value {
+      font-weight: 700;
+      color: #4ade80;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="severity">${f.severity}</div>
+    <h1>${escapeHtml(f.vulnerability || 'Security Issue')}</h1>
+    <div class="cwe">${escapeHtml(f.cwe || 'Unknown CWE')}</div>
+    <div class="confidence">
+      <span style="font-size: 12px; color: #888;">Confidence:</span>
+      <div class="confidence-bar">
+        <div class="confidence-fill"></div>
+      </div>
+      <span class="confidence-value">${(f.confidence * 100).toFixed(0)}%</span>
+    </div>
+  </div>
+
+  ${f.root_cause ? `
+    <div class="section">
+      <div class="section-title">🔍 Root Cause</div>
+      <div class="content">${escapeHtml(f.root_cause)}</div>
+    </div>
+  ` : ''}
+
+  ${f.attack_scenario ? `
+    <div class="section">
+      <div class="section-title">⚔️ Attack Scenario</div>
+      <div class="content">${escapeHtml(f.attack_scenario)}</div>
+    </div>
+  ` : ''}
+
+  ${f.secure_fix ? `
+    <div class="section">
+      <div class="section-title">✅ Recommended Fix</div>
+      <div class="content">${escapeHtml(f.secure_fix)}</div>
+    </div>
+  ` : ''}
+
+  ${f.patched_code ? `
+    <div class="section">
+      <div class="section-title">💻 Patched Code</div>
+      <div class="code">${escapeHtml(f.patched_code.slice(0, 500))}${f.patched_code.length > 500 ? '...' : ''}</div>
+    </div>
+  ` : ''}
+
+  ${f.references && f.references.length > 0 ? `
+    <div class="section">
+      <div class="section-title">📚 References</div>
+      <div class="content">
+        ${f.references.map(ref => `<div style="margin-bottom: 4px;">• <a href="${ref}" style="color: #22d3ee;">${ref}</a></div>`).join('')}
+      </div>
+    </div>
+  ` : ''}
+</body>
+</html>`;
     }));
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.showLastFinding', () => {
         const ed = vscode.window.activeTextEditor;
@@ -424,6 +1461,7 @@ function activate(context) {
         if (!ed)
             return;
         await fixWithLLM(ed.document, diag);
+        treeProvider.refresh();
     }));
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.applyPatch', async (diag) => {
         const ed = vscode.window.activeTextEditor;
@@ -436,6 +1474,7 @@ function activate(context) {
         }
         const fullRange = new vscode.Range(ed.document.positionAt(0), ed.document.positionAt(ed.document.getText().length));
         await ed.edit(b => b.replace(fullRange, patched));
+        treeProvider.refresh();
     }));
     // ─── Provider Picker ───
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.chooseProvider', async () => {
@@ -468,6 +1507,7 @@ function activate(context) {
         await vscode.workspace.getConfiguration('rakshakai').update('provider', provider, vscode.ConfigurationTarget.Global);
         await vscode.workspace.getConfiguration('rakshakai').update('model', model, vscode.ConfigurationTarget.Global);
         vscode.window.showInformationMessage(`🛡️ Provider: ${provider} | Model: ${model || 'default'}`);
+        treeProvider.refresh();
     }));
     // ─── Dashboard ───
     context.subscriptions.push(vscode.commands.registerCommand('rakshakai.dashboard', () => {
@@ -487,17 +1527,58 @@ function activate(context) {
     // ─── Code Actions ───
     const langs = ['python', 'javascript', 'typescript', 'java', 'go', 'rust', 'c', 'cpp', 'php', 'csharp', 'ruby'];
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider(langs, {
-        provideCodeActions: (_doc, _range, ctx) => ctx.diagnostics.filter(d => d.source === RAKSHAK_DIAG).map(applyPatchCommand),
+        provideCodeActions: (_doc, _range, ctx) => ctx.diagnostics
+            .filter(d => d.source === RAKSHAK_DIAG)
+            .flatMap(d => [applyPatchCommand(d), createNotionReportCommand(d)]),
+    }));
+    // ─── Notion Integration ───
+    context.subscriptions.push(vscode.commands.registerCommand('rakshakai.notionReport', async (diag) => {
+        const cfg = getConfig();
+        const ed = vscode.window.activeTextEditor;
+        const docUri = ed?.document.uri.toString() || '';
+        const f = findingsCache.get(docUri) || diag;
+        const payload = {
+            title: f.vulnerability || diag.message.split('\n')[0] || 'Security Finding',
+            severity: (f.severity || 'medium').charAt(0).toUpperCase() + (f.severity || 'medium').slice(1),
+            confidence: f.confidence || 0.8,
+            cwe_id: f.cwe || diag.code || '',
+            vulnerability_type: f.vulnerability || '',
+            repository: ed ? ed.document.uri.fsPath.split('/').slice(-3, -1).join('/') : '',
+            file_path: ed ? ed.document.fileName : '',
+            line_number: diag.range.start.line + 1,
+            language: ed ? ed.document.languageId : '',
+            root_cause: f.root_cause || '',
+            attack_scenario: f.attack_scenario || '',
+            secure_fix: f.secure_fix || '',
+            patched_code: f.patched_code || '',
+            original_code: ed ? ed.document.getText(diag.range) : '',
+            references: f.references || [],
+            tags: [ed?.document.languageId || 'unknown'],
+        };
+        try {
+            const r = await axios_1.default.post(`${cfg.serverUrl}/v2/notion/report`, payload, { timeout: 15_000 });
+            const url = r.data.url;
+            vscode.window.showInformationMessage(`📋 Notion Report Created`, 'Open in Notion').then(choice => {
+                if (choice && url)
+                    vscode.env.openExternal(url);
+            });
+        }
+        catch (e) {
+            vscode.window.showErrorMessage(`Notion: ${e?.response?.data?.detail || e?.message || 'failed'}`);
+        }
     }));
     // ─── Events ───
-    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
-        if (getConfig().scanOnSave)
-            scanDocument(doc);
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(async (doc) => {
+        if (getConfig().scanOnSave) {
+            await scanDocument(doc);
+            treeProvider.refresh();
+        }
     }));
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(doc => {
         findingsCache.delete(doc.uri.toString());
         abortControllers.delete(doc.uri.toString());
         diagnosticCollection.delete(doc.uri);
+        treeProvider.refresh();
     }));
     // ─── Status Bar ───
     const sb = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

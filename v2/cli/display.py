@@ -425,57 +425,148 @@ class StreamingPanel:
 def create_scan_progress() -> Progress:
     """Create beautiful progress bar for batch scanning."""
     return Progress(
-        SpinnerColumn(spinner_name="dots"),
+        SpinnerColumn(spinner_name="dots12", style="bold cyan"),
         TextColumn("[bold cyan]{task.description}"),
-        BarColumn(complete_style="cyan", finished_style="green"),
-        TaskProgressColumn(),
+        BarColumn(
+            complete_style="bold green",
+            finished_style="bold green",
+            pulse_style="bold yellow",
+            bar_width=None,  # Auto-adjust to terminal width
+        ),
+        TaskProgressColumn(style="bold white"),
         "•",
-        TextColumn("[dim]{task.fields[status]}"),
+        TextColumn("[bold yellow]{task.fields[status]}"),
+        "•",
         TimeElapsedColumn(),
         console=console,
         expand=True,
+        transient=False,  # Keep progress visible after completion
     )
+
+
+def create_spinner_status(message: str, style: str = "cyan") -> Status:
+    """Create a beautiful spinner for long-running operations."""
+    return Status(
+        f"[bold {style}]{message}[/]",
+        spinner="dots12",
+        spinner_style=style,
+        console=console,
+    )
+
+
+def show_progress_box(title: str, current: int, total: int, extra_info: str = ""):
+    """Display a progress box with percentage and bar."""
+    percentage = (current / total * 100) if total > 0 else 0
+    bar_width = 40
+    filled = int((current / total) * bar_width) if total > 0 else 0
+    bar = "█" * filled + "░" * (bar_width - filled)
+    
+    if percentage >= 100:
+        color = "green"
+        icon = "✓"
+    elif percentage >= 75:
+        color = "yellow"
+        icon = "⚡"
+    elif percentage >= 50:
+        color = "cyan"
+        icon = "⏳"
+    else:
+        color = "blue"
+        icon = "🔄"
+    
+    content = Table.grid(padding=(0, 2))
+    content.add_column(justify="center")
+    
+    content.add_row(f"[bold white]{current} / {total}[/] [dim]({percentage:.1f}%)[/]")
+    content.add_row(f"[{color}]{bar}[/]")
+    
+    if extra_info:
+        content.add_row(f"[dim]{extra_info}[/]")
+    
+    console.print(Panel(
+        Align.center(content),
+        title=f"[bold]{icon} {title}[/]",
+        border_style=color,
+        padding=(1, 2),
+    ))
 
 
 # ── Output ─────────────────────────────────────────────────
 
 def show_banner(model_name: str = "rakshak"):
-    """Startup banner with logo."""
+    """Startup banner with animated gradient logo."""
     if not model_name:
         model_name = "rakshak"
     model_color = MODEL_COLORS.get(model_name, "white")
     model_label = MODEL_LABELS.get(model_name, model_name)
 
-    logo = """
-[bold cyan]
-    ██████╗  ██████╗ ██╗  ██╗███████╗██╗  ██╗ █████╗ ██╗
-    ██╔══██╗██╔═══██╗██║ ██╔╝██╔════╝██║  ██║██╔══██╗██║
-    ██████╔╝███████║█████╔╝ ███████╗███████║███████║██║
-    ██╔══██╗██╔══██║██╔═██╗ ╚════██║██╔══██║██╔══██║██║
-    ██║  ██║██║  ██║██║  ██╗███████║██║  ██║██║  ██║██║
-    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝
-[/bold cyan]"""
+    # Animated gradient ASCII art logo
+    logo = Text()
+    lines = [
+        "    ██████╗  ██████╗ ██╗  ██╗███████╗██╗  ██╗ █████╗ ██╗",
+        "    ██╔══██╗██╔═══██╗██║ ██╔╝██╔════╝██║  ██║██╔══██╗██║",
+        "    ██████╔╝███████║█████╔╝ ███████╗███████║███████║██║",
+        "    ██╔══██╗██╔══██║██╔═██╗ ╚════██║██╔══██║██╔══██║██║",
+        "    ██║  ██║██║  ██║██║  ██╗███████║██║  ██║██║  ██║██║",
+        "    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝",
+    ]
+    
+    # Create gradient effect
+    colors = ["#00ffff", "#00e5ff", "#00ccff", "#0099ff", "#0066ff", "#0033ff"]
+    for i, line in enumerate(lines):
+        logo.append(line + "\n", style=f"bold {colors[i]}")
+    
+    console.print()
+    console.print(Align.center(logo))
+    
+    # Version and tagline with gradient
+    tagline = Text()
+    tagline.append("⚡ ", style="bold yellow")
+    tagline.append("The World's Fastest", style="bold white")
+    tagline.append(" AI Security Scanner", style="bold #00ffff")
+    tagline.append(" ⚡", style="bold yellow")
+    console.print(Align.center(tagline))
+    console.print()
 
-    console.print(logo)
+    # Feature highlights grid
+    features_grid = Table.grid(padding=(0, 2), expand=True)
+    features_grid.add_column(justify="center")
+    features_grid.add_column(justify="center")
+    features_grid.add_column(justify="center")
+    features_grid.add_column(justify="center")
+    
+    features_grid.add_row(
+        f"[bold cyan]⚡ 20ms/file[/]",
+        f"[bold green]150+ patterns[/]",
+        f"[bold magenta]65+ models[/]",
+        f"[bold yellow]80K CWE trained[/]",
+    )
+    
+    features_grid.add_row(
+        "[dim]100x faster[/]",
+        "[dim]Multi-agent[/]",
+        "[dim]Self-healing[/]",
+        "[dim]LSP powered[/]",
+    )
+    
+    console.print(features_grid)
+    console.print()
 
-    info = Text()
-    info.append("  ")
-    info.append(f"●", style=f"bold {model_color}")
-    info.append(f" {model_label}", style=model_color)
-    info.append("  ", style="dim")
-    info.append("|", style="dim")
-    info.append("  /help  ", style="bold")
-    info.append("|", style="dim")
-    info.append("  /models  ", style="bold")
-    info.append("|", style="dim")
-    info.append("  /scan", style="bold")
-
-    console.print(Panel(
-        info,
-        subtitle="[dim]AI security scanner \u2014 150+ patterns, 65+ models[/dim]",
+    # Active model info bar
+    info = Table.grid(padding=(0, 1))
+    info.add_column(justify="right", style="dim")
+    info.add_column(style="bold")
+    
+    info.add_row("Active Model:", f"[{model_color}]● {model_label}[/]")
+    info.add_row("Quick Start:", "[cyan]/help[/] | [cyan]/scan <file>[/] | [cyan]/models[/]")
+    
+    panel = Panel(
+        Align.center(info),
         border_style="#00e5ff",
-        padding=(0, 2),
-    ))
+        padding=(1, 2),
+        box=box.DOUBLE,
+    )
+    console.print(panel)
     console.print()
 
 
@@ -577,9 +668,22 @@ def show_parallel_results(results: dict[str, str]):
 
 
 def show_vuln_table(vulns: list[dict]):
-    """Beautiful vulnerability table with confidence-based coloring."""
+    """Beautiful vulnerability display with modern cards and visualizations."""
     if not vulns:
-        console.print(Panel("✅ [green bold]No vulnerabilities detected[/]", border_style="green"))
+        # Celebratory empty state
+        empty_panel = Panel(
+            Align.center(Text.from_markup(
+                "✨ [bold green]No Vulnerabilities Detected[/] ✨\n\n"
+                "[dim]Your code is secure and looking great![/dim]\n"
+                "🎉 🛡️ 🎉"
+            )),
+            border_style="green",
+            box=box.DOUBLE,
+            padding=(2, 4),
+        )
+        console.print()
+        console.print(empty_panel)
+        console.print()
         return
     
     # Sort by severity and confidence
@@ -589,35 +693,118 @@ def show_vuln_table(vulns: list[dict]):
         -v.get("confidence", 0)
     ))
     
-    table = Table(
-        box=box.ROUNDED,
-        padding=(0, 1),
-        show_header=True,
-        header_style="bold cyan",
-        border_style="dim",
-    )
-    table.add_column("CWE", style="cyan", width=12)
-    table.add_column("Severity", width=10)
-    table.add_column("Conf.", justify="right", width=6)
-    table.add_column("Location", width=20)
-    table.add_column("Description", ratio=1)
+    # Summary stats bar
+    counts = {
+        "critical": sum(1 for v in vulns if v.get("severity", "").lower() == "critical"),
+        "high": sum(1 for v in vulns if v.get("severity", "").lower() == "high"),
+        "medium": sum(1 for v in vulns if v.get("severity", "").lower() == "medium"),
+        "low": sum(1 for v in vulns if v.get("severity", "").lower() == "low"),
+    }
     
-    for v in sorted_vulns:
+    summary_grid = Table.grid(padding=(0, 3), expand=True)
+    summary_grid.add_column(justify="center")
+    summary_grid.add_column(justify="center")
+    summary_grid.add_column(justify="center")
+    summary_grid.add_column(justify="center")
+    summary_grid.add_column(justify="center")
+    
+    summary_grid.add_row(
+        f"[bold]TOTAL[/]\n[bold white]{len(vulns)}[/]",
+        f"[bold red]CRITICAL[/]\n[bold red]{counts['critical']}[/]" if counts['critical'] > 0 else "[dim]CRITICAL\n0[/]",
+        f"[bold red]HIGH[/]\n[bold red]{counts['high']}[/]" if counts['high'] > 0 else "[dim]HIGH\n0[/]",
+        f"[bold yellow]MEDIUM[/]\n[bold yellow]{counts['medium']}[/]" if counts['medium'] > 0 else "[dim]MEDIUM\n0[/]",
+        f"[bold blue]LOW[/]\n[bold blue]{counts['low']}[/]" if counts['low'] > 0 else "[dim]LOW\n0[/]",
+    )
+    
+    console.print()
+    console.print(Panel(
+        summary_grid,
+        title="[bold]🔍 Vulnerability Summary[/]",
+        border_style="cyan",
+        padding=(1, 2),
+        box=box.ROUNDED,
+    ))
+    console.print()
+    
+    # Display vulnerabilities as cards
+    for idx, v in enumerate(sorted_vulns[:15]):  # Limit to 15 for readability
         sev = v.get("severity", "").lower()
         sev_style = SEV_STYLES.get(sev, "white")
         sev_icon = SEV_ICONS.get(sev, "")
         conf = v.get("confidence", 0.0)
         conf_style = confidence_color(conf)
         
-        table.add_row(
-            v.get("cwe", "CWE-???"),
-            f"[{sev_style}]{sev_icon} {sev.upper()}[/]",
-            f"[{conf_style}]{conf:.0%}[/]",
-            (v.get("file", v.get("location", "?"))[:18]),
-            v.get("description", "")[:80] + ("..." if len(v.get("description", "")) > 80 else ""),
-        )
+        # Card header
+        header = Table.grid(padding=(0, 2))
+        header.add_column(justify="left")
+        header.add_column(justify="right")
+        
+        cwe_text = Text()
+        cwe_text.append(f"{sev_icon} ", style=sev_style)
+        cwe_text.append(v.get("cwe", "CWE-???"), style="bold cyan")
+        
+        conf_text = Text()
+        conf_text.append("Confidence: ", style="dim")
+        conf_text.append(f"{conf:.0%}", style=conf_style)
+        
+        header.add_row(cwe_text, conf_text)
+        
+        # Card content
+        content = Table.grid(padding=(0, 1))
+        content.add_column(style="dim", width=12)
+        content.add_column()
+        
+        content.add_row("Severity:", f"[{sev_style}]{sev.upper()}[/]")
+        
+        if v.get("file") or v.get("location"):
+            loc = v.get("file", v.get("location", "unknown"))
+            content.add_row("Location:", f"[yellow]{loc}[/]")
+        
+        if v.get("description"):
+            desc = v.get("description", "")
+            if len(desc) > 100:
+                desc = desc[:97] + "..."
+            content.add_row("Issue:", desc)
+        
+        if v.get("root_cause"):
+            cause = v.get("root_cause", "")
+            if len(cause) > 100:
+                cause = cause[:97] + "..."
+            content.add_row("Cause:", f"[dim]{cause}[/]")
+        
+        if v.get("secure_fix"):
+            fix = v.get("secure_fix", "")
+            if len(fix) > 100:
+                fix = fix[:97] + "..."
+            content.add_row("Fix:", f"[green]{fix}[/]")
+        
+        # Confidence bar
+        bar_width = 30
+        filled = int(conf * bar_width)
+        empty = bar_width - filled
+        conf_bar = "█" * filled + "░" * empty
+        content.add_row("", f"[{conf_style}]{conf_bar}[/]")
+        
+        # Assemble card
+        card_content = Table.grid()
+        card_content.add_row(header)
+        card_content.add_row("")
+        card_content.add_row(content)
+        
+        # Color-coded border
+        border_color = {"critical": "red", "high": "red", "medium": "yellow", "low": "blue"}.get(sev, "white")
+        
+        console.print(Panel(
+            card_content,
+            border_style=border_color,
+            padding=(1, 2),
+            box=box.ROUNDED,
+        ))
     
-    console.print(table)
+    if len(sorted_vulns) > 15:
+        console.print(f"\n[dim]... and {len(sorted_vulns) - 15} more vulnerabilities[/]\n")
+    
+    console.print()
 
 
 def show_scan_tree(results: list[dict]):
@@ -772,6 +959,11 @@ def show_help():
         ("", ""),
         ("/confirm <id>", "Mark finding as true positive"),
         ("/dismiss <id>", "Mark finding as false positive"),
+        ("", ""),
+        ("/notion setup <page_id>", "Setup Notion Security Center"),
+        ("/notion report", "Create Notion report for last scan"),
+        ("/notion dashboard", "Open Notion security dashboard"),
+        ("/notion stats", "Show Notion security statistics"),
         ("", ""),
         ("/agent <task>", "Run autonomous agent"),
         ("/swarm <task>", "Multi-agent swarm (parallel subagents)"),
@@ -954,7 +1146,7 @@ def show_session_summary(
 
 
 def interactive_model_selector(models: dict, current_model: str) -> Optional[str]:
-    """Interactive model selector — type number or name (like opencode)."""
+    """Interactive model selector with rich preview and comparison."""
     providers: dict[str, list[tuple[int, str]]] = {}
     numbered: list[str] = []
     idx = 0
@@ -965,19 +1157,51 @@ def interactive_model_selector(models: dict, current_model: str) -> Optional[str
         prov = cfg.provider or "other"
         providers.setdefault(prov, []).append((idx, name))
 
+    # Create beautiful model selection UI
     console.print()
+    console.print(Panel.fit(
+        "[bold cyan]🤖 Select AI Model[/bold cyan]\n[dim]Choose by number or name • Tab for autocomplete • Enter to cancel[/dim]",
+        border_style="cyan",
+        padding=(1, 2),
+    ))
+    console.print()
+
     for prov, items in providers.items():
-        console.print(f"  [bold white on #333333]  {prov.upper()}  [/]")
+        # Provider header with emoji
+        prov_emoji = {
+            "ollama": "🦙",
+            "nvidia": "💚",
+            "fireworks": "🔥",
+            "together": "🚀",
+            "groq": "⚡",
+            "openai": "🤖",
+            "anthropic": "🧠",
+            "openrouter": "🌐",
+            "google": "🔍",
+            "deepseek": "🌊",
+            "mistral": "🌪️",
+            "xai": "✨",
+            "perplexity": "🔎",
+            "deepinfra": "🏗️",
+            "aiml": "🎯",
+        }.get(prov.lower(), "🤖")
+        
+        console.print(f"  {prov_emoji} [bold white on #333333]  {prov.upper()}  [/]")
+        
         for num, name in items:
             label = MODEL_LABELS.get(name, name)
             color = MODEL_COLORS.get(name, "white")
-            mark = "[green]●[/]" if name == current_model else " "
+            mark = "[bold green]●[/]" if name == current_model else "[dim]○[/]"
             desc = MODEL_DESCRIPTIONS.get(name, "")
+            
+            # Truncate description for readability
+            if desc and len(desc) > 80:
+                desc = desc[:77] + "..."
+            
             console.print(
-                f"  {mark} [dim]{num}.[/] [{color}]{label}[/]"
-                f"{'  [dim]' + desc + '[/dim]' if desc else ''}"
+                f"  {mark} [dim]{num:2d}.[/] [{color}]{label:<30}[/] [dim]{desc}[/]"
             )
-    console.print()
+        console.print()
 
     try:
         from prompt_toolkit import prompt
@@ -987,12 +1211,12 @@ def interactive_model_selector(models: dict, current_model: str) -> Optional[str
         word_comp = WordCompleter(list(models.keys()) + [str(i) for i in range(1, len(models) + 1)])
 
         choice = prompt(
-            "  Select model (number or name): ",
+            "  [cyan]❯[/] ",
             completer=FuzzyCompleter(word_comp),
             complete_while_typing=True,
         ).strip()
     except ImportError:
-        choice = input("  Select model (number or name): ").strip()
+        choice = input("  ❯ ").strip()
 
     if not choice:
         return None
@@ -1000,9 +1224,17 @@ def interactive_model_selector(models: dict, current_model: str) -> Optional[str
     if choice.isdigit():
         n = int(choice)
         if 1 <= n <= len(numbered):
-            return numbered[n - 1]
+            selected = numbered[n - 1]
+            # Show selection confirmation
+            label = MODEL_LABELS.get(selected, selected)
+            color = MODEL_COLORS.get(selected, "white")
+            console.print(f"\n  [green]✓[/] Selected: [{color}]{label}[/]\n")
+            return selected
 
     if choice in models:
+        label = MODEL_LABELS.get(choice, choice)
+        color = MODEL_COLORS.get(choice, "white")
+        console.print(f"\n  [green]✓[/] Selected: [{color}]{label}[/]\n")
         return choice
 
     # fuzzy match
@@ -1010,6 +1242,9 @@ def interactive_model_selector(models: dict, current_model: str) -> Optional[str
     for name in models:
         label = MODEL_LABELS.get(name, name).lower()
         if low in label or low in name:
+            model_label = MODEL_LABELS.get(name, name)
+            model_color = MODEL_COLORS.get(name, "white")
+            console.print(f"\n  [green]✓[/] Selected: [{model_color}]{model_label}[/]\n")
             return name
 
     show_error(f"Unknown model: {choice}")
@@ -1085,6 +1320,152 @@ def show_swarm_results(result: dict):
         padding=(1, 2),
     )
     console.print(panel)
+
+
+def show_interactive_dashboard(stats: dict, live_update: bool = False):
+    """Display an interactive dashboard with real-time statistics and charts."""
+    
+    # Summary metrics
+    metrics = Table.grid(padding=(0, 3), expand=True)
+    metrics.add_column(justify="center")
+    metrics.add_column(justify="center")
+    metrics.add_column(justify="center")
+    metrics.add_column(justify="center")
+    
+    total_scans = stats.get("analyses", 0)
+    total_files = stats.get("files_scanned", 0)
+    cache_hits = stats.get("cache_entries", 0)
+    sessions = stats.get("sessions", 0)
+    
+    metrics.add_row(
+        f"[bold cyan]📊 SESSIONS[/]\n[bold white]{sessions}[/]",
+        f"[bold green]🔍 SCANS[/]\n[bold white]{total_scans}[/]",
+        f"[bold yellow]📁 FILES[/]\n[bold white]{total_files}[/]",
+        f"[bold magenta]💾 CACHED[/]\n[bold white]{cache_hits}[/]",
+    )
+    
+    # Top CWEs visualization
+    top_cwes_panel = None
+    if stats.get("top_cwes"):
+        cwe_table = Table(box=box.SIMPLE, padding=(0, 2), show_header=False)
+        cwe_table.add_column("CWE", style="cyan", width=15)
+        cwe_table.add_column("Count", justify="right", width=8)
+        cwe_table.add_column("Bar", ratio=1)
+        
+        max_count = max(c["count"] for c in stats["top_cwes"][:10])
+        for cwe_data in stats["top_cwes"][:10]:
+            cwe = cwe_data["cwe"]
+            count = cwe_data["count"]
+            bar_width = 30
+            filled = int((count / max_count) * bar_width) if max_count > 0 else 0
+            bar = "█" * filled + "░" * (bar_width - filled)
+            
+            cwe_table.add_row(
+                f"[bold]{cwe}[/]",
+                f"[bold]{count}[/]",
+                f"[red]{bar}[/]"
+            )
+        
+        top_cwes_panel = Panel(
+            cwe_table,
+            title="[bold]🎯 Top Vulnerabilities[/]",
+            border_style="red",
+            padding=(1, 2),
+        )
+    
+    # Model usage breakdown
+    model_usage_panel = None
+    if stats.get("model_usage"):
+        model_table = Table(box=box.SIMPLE, padding=(0, 2))
+        model_table.add_column("Model", style="bold")
+        model_table.add_column("Scans", justify="right", width=8)
+        model_table.add_column("Avg Time", justify="right", width=10)
+        model_table.add_column("Total", justify="right", width=10)
+        
+        for m in stats["model_usage"][:10]:
+            model_name = m["model"]
+            model_color = MODEL_COLORS.get(model_name, "white")
+            model_label = MODEL_SHORT_LABELS.get(model_name, model_name)
+            
+            model_table.add_row(
+                f"[{model_color}]{model_label}[/]",
+                f"[bold]{m['count']}[/]",
+                f"[yellow]{m['avg_ms']}ms[/]",
+                f"[dim]{m['total_ms'] / 1000:.1f}s[/]",
+            )
+        
+        model_usage_panel = Panel(
+            model_table,
+            title="[bold]🤖 Model Usage[/]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    
+    # Precision gauge
+    precision_panel = None
+    if stats.get("precision") is not None:
+        precision = stats["precision"]
+        confirmed = stats.get("feedback_confirmed", 0)
+        total = stats.get("feedback_total", 1)
+        
+        # Create precision gauge
+        gauge_width = 40
+        filled = int(precision * gauge_width)
+        empty = gauge_width - filled
+        
+        if precision >= 0.8:
+            gauge_color = "green"
+            rating = "EXCELLENT"
+        elif precision >= 0.6:
+            gauge_color = "yellow"
+            rating = "GOOD"
+        else:
+            gauge_color = "red"
+            rating = "NEEDS IMPROVEMENT"
+        
+        gauge_bar = "█" * filled + "░" * empty
+        
+        precision_content = Table.grid(padding=(0, 2))
+        precision_content.add_column(justify="center")
+        
+        precision_content.add_row(f"[bold white]{precision:.1%}[/] [dim]({confirmed}/{total})[/]")
+        precision_content.add_row(f"[{gauge_color}]{gauge_bar}[/]")
+        precision_content.add_row(f"[bold {gauge_color}]{rating}[/]")
+        
+        precision_panel = Panel(
+            Align.center(precision_content),
+            title="[bold]🎯 Precision Score[/]",
+            border_style=gauge_color,
+            padding=(1, 2),
+        )
+    
+    # Assemble dashboard
+    console.print()
+    console.print(Panel(
+        metrics,
+        title="[bold]📊 RakshakAI Dashboard[/]",
+        subtitle="[dim]Real-time Security Analytics[/]",
+        border_style="cyan",
+        padding=(2, 2),
+        box=box.DOUBLE,
+    ))
+    console.print()
+    
+    # Two-column layout for detailed stats
+    if top_cwes_panel and model_usage_panel:
+        cols = Columns([top_cwes_panel, model_usage_panel], equal=True, expand=True)
+        console.print(cols)
+        console.print()
+    elif top_cwes_panel:
+        console.print(top_cwes_panel)
+        console.print()
+    elif model_usage_panel:
+        console.print(model_usage_panel)
+        console.print()
+    
+    if precision_panel:
+        console.print(precision_panel)
+        console.print()
 
 
 def show_auth_status(state):

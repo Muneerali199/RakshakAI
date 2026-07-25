@@ -22,6 +22,13 @@
     "views": {
       "rakshak": [
         {
+          "type": "webview",
+          "id": "rakshak-sidebar",
+          "name": "Security Overview",
+          "icon": "$(dashboard)",
+          "contextualTitle": "RakshakAI"
+        },
+        {
           "id": "rakshak-files",
           "name": "Findings",
           "icon": "$(list-unordered)",
@@ -33,7 +40,7 @@
       {
         "view": "rakshak-files",
         "contents": [
-          "### 🛡️ RakshakAI\nScanning your code for security vulnerabilities.\n\n[Scan Current File](command:rakshakai.scanFile)\n[Scan Workspace](command:rakshakai.scanWorkspace)\n[Open Dashboard](command:rakshakai.dashboard)\n[Choose Provider](command:rakshakai.chooseProvider)"
+          "### 🛡️ RakshakAI Security Scanner\nNo vulnerabilities detected yet.\n\n[Scan Current File](command:rakshakai.scanFile)\n\n[Scan Workspace](command:rakshakai.scanWorkspace)\n\n[Open Dashboard](command:rakshakai.dashboard)\n\n[Choose Provider](command:rakshakai.chooseProvider)"
         ]
       }
     ],
@@ -71,6 +78,14 @@
         "rakshakai.model": {
           "type": "string", "default": "",
           "description": "Model ID override"
+        },
+        "rakshakai.notionEnabled": {
+          "type": "boolean", "default": false,
+          "description": "Enable Notion Security Hub integration"
+        },
+        "rakshakai.notionServerUrl": {
+          "type": "string", "default": "http://localhost:8080",
+          "description": "Server URL for Notion API"
         }
       }
     },
@@ -80,7 +95,9 @@
       { "command": "rakshakai.dashboard", "title": "Open Dashboard", "icon": "$(graph)" },
       { "command": "rakshakai.chooseProvider", "title": "Choose Provider & Model", "icon": "$(settings-gear)" },
       { "command": "rakshakai.showLastFinding", "title": "Show Last Finding", "icon": "$(info)" },
-      { "command": "rakshakai.applyPatch", "title": "Apply Suggested Patch", "icon": "$(code)" }
+      { "command": "rakshakai.showFindingDetails", "title": "Show Finding Details", "icon": "$(file-text)" },
+      { "command": "rakshakai.applyPatch", "title": "Apply Suggested Patch", "icon": "$(code)" },
+      { "command": "rakshakai.notionReport", "title": "Create Notion Security Report", "icon": "$(browser)" }
     ]
   },
   "scripts": {

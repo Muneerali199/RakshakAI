@@ -478,5 +478,13 @@ async def batch_scan(req: BatchScanRequest) -> list[ScanResponse]:
     return responses
 
 
+# ─── Notion Integration ───
+try:
+    from v2.api.notion import router as notion_router
+    app.include_router(notion_router)
+except ImportError:
+    pass
+
+
 if __name__ == "__main__":
     uvicorn.run("v2.deploy.server:app", host="0.0.0.0", port=8080, reload=True, workers=1)
