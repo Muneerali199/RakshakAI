@@ -1,14 +1,17 @@
 """Fast autonomous agent — cached prompts, robust parsing, streaming, retry."""
 from __future__ import annotations
-import json, re, time, hashlib
-from typing import Optional, Callable, Any
+import hashlib
+import json
+import re
+import time
+from typing import Any, Callable, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
 from v2.cli.llm import registry, stream_chat, chat_sync
 from v2.cli.compactor import should_compact, compact_conversation, estimate_tokens
 from v2.cli.cost_tracker import track_usage
-from v2.cli.hooks import hooks, Hook, HookEvent
+from v2.cli.hooks import hooks, HookEvent
 from v2.cli.system_prompt import build_system_prompt
 
 
@@ -87,11 +90,11 @@ class ReActAgent:
     def __init__(
         self,
         mode: AgentMode = AgentMode.INTERACTIVE,
-        max_iterations: int = 15,
+        max_iterations: int = 40,
         tools: Optional[dict[str, Callable]] = None,
         model: str = "deepseek",
         max_retries: int = 2,
-        context_budget: int = 8000,
+        context_budget: int = 24000,
     ):
         self.mode = mode
         self.max_iterations = max_iterations
@@ -123,17 +126,25 @@ class ReActAgent:
         return "\n".join(parts)
 
     def _build_system(self, task: str, step: int, cwd: str) -> str:
-        cache_key = f"{cwd}:{step}:{self.model}"
+        # A system prompt includes the task and tool history.  Never share it
+        # between tasks: doing so makes a long-lived REPL agent act on stale
+        # instructions from an earlier request.
+        task_key = hashlib.sha256(task.encode("utf-8")).hexdigest()[:16]
+        cache_key = f"{cwd}:{task_key}:{step}:{self.model}"
         if cache_key in self._prompt_cache:
             return self._prompt_cache[cache_key]
         history = self._format_history()
         system = build_system_prompt(
             cwd=cwd, include_git=True, include_rakshakai_md=True, include_agents_md=True,
-            extra_context=f"""Task: {task[:300]}
+            extra_context=f"""Task: {task}
 Step {step}/{self.max_iterations}
 {history}
 
-{self._tools_schema}""",
+{self._tools_schema}
+
+Work deliberately: inspect relevant files before editing, make the smallest
+coherent change, then run the relevant tests or lint command. For large
+repositories, search before reading and inspect files in bounded chunks.""",
         )
         self._prompt_cache[cache_key] = system
         if len(self._prompt_cache) > 10:
@@ -232,7 +243,9 @@ Step {step}/{self.max_iterations}
                 observation = self.act(thought.action)
                 thought.observation = observation
                 if observation.success:
-                    result_text = str(observation.result)[:500]
+                    # File reads and test failures often need more than a few
+                    # hundred characters to make the next action reliable.
+                    result_text = str(observation.result)[:8000]
                 else:
                     result_text = f"ERROR: {observation.error}"
                 self.conversation.append({"role": "assistant", "content": thought.thought[:300]})

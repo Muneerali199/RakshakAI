@@ -5,7 +5,7 @@ import logging
 import time
 import threading
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Callable
 from datetime import datetime
 
 from v2.integrations.notion.client import NotionClient
@@ -94,14 +94,6 @@ class NotionSync:
         self._emit("on_update", {"page_id": page_id, "report": report})
 
     def mark_fixed(self, page_id: str, notes: str = ""):
-        report = VulnerabilityReport(
-            title="",
-            severity=SeverityLevel.INFO,
-            confidence=0,
-            status=FindingStatus.RESOLVED,
-            resolution_notes=notes,
-            updated_at=datetime.utcnow().isoformat(),
-        )
         self.database.update_status(page_id, FindingStatus.RESOLVED)
         self._emit("on_status_change", {
             "page_id": page_id,

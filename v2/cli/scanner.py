@@ -15,6 +15,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+# Export public API
+__all__ = [
+    'scan_code',
+    'scan_code_quick',
+    'scan_code_optimized',
+    'static_scan',
+    'collect_source_files',
+    'BatchScanner',
+    'ScanResult',
+]
+
 
 def _extract_json(text: str) -> dict:
     """Extract JSON object from LLM response text."""
@@ -506,33 +517,63 @@ def scan_code_quick(
 
     static_findings = static_scan(code, language=lang)
 
+    # Map model to provider and model_id for server
+    provider_map = {
+        "ollama": ("ollama", "qwen2.5-coder:1.5b"),
+        "groq-llama-70b": ("groq", "llama-3.1-70b-versatile"),
+        "groq-llama-8b": ("groq", "llama-3.1-8b-instant"),
+        "deepseek": ("groq", "llama-3.1-70b-versatile"),
+    }
+    
+    provider, model_id = provider_map.get(model, ("ollama", "qwen2.5-coder:1.5b"))
+
     # Try server first, fall back to direct LLM
     try:
         resp = _req.post(
             "http://localhost:8080/v2/scan",
-            json={"code": code, "language": lang},
+            json={
+                "code": code,
+                "language": lang,
+                "provider": provider,
+                "model": model_id
+            },
             timeout=30,
         )
         if resp.status_code == 200:
             data = resp.json()
             f = data.get("finding", {})
-            if f.get("cwe"):
-                merged = {f["cwe"]: {
+            if f and f.get("cwe"):
+                vuln = {
                     "cwe": f["cwe"],
+                    "name": f.get("vulnerability", ""),
                     "severity": f.get("severity", "medium"),
                     "confidence": f.get("confidence", 0.8),
                     "description": f.get("root_cause", ""),
+                    "fix": f.get("secure_fix", ""),
                     "remediation": f.get("secure_fix", ""),
+                    "attack_scenario": f.get("attack_scenario", ""),
                     "vulnerable_code": "",
                     "fixed_code": f.get("patched_code", ""),
-                }}
-                vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
+                    "location": f.get("location", ""),
+                    "root_cause": f.get("root_cause", ""),
+                    "secure_fix": f.get("secure_fix", ""),
+                    "patched_code": f.get("patched_code", ""),
+                }
+                vuln_list = [vuln] + static_findings
                 return {
                     "vulnerabilities": vuln_list,
-                    "summary": f"Found 1 issue(s): {f['cwe']}",
+                    "summary": f"Found {len(vuln_list)} issue(s): {', '.join(v['cwe'] for v in vuln_list[:3])}",
                     "_raw": str(f),
                 }
-    except Exception:
+            elif static_findings:
+                # Server found nothing but we have static findings
+                return {
+                    "vulnerabilities": static_findings,
+                    "summary": f"Found {len(static_findings)} issue(s) (static analysis)",
+                    "_raw": "",
+                }
+    except Exception as e:
+        # Server not available, fall back to direct LLM
         pass
 
     # Fallback to direct LLM
@@ -541,36 +582,64 @@ def scan_code_quick(
     cfg = _get_model_config(model)
     if not cfg:
         cfg = _get_model_config("groq-llama-70b")
-    messages = _get_scan(f"```{lang}\n{code}\n```", model, language=lang)
-    response = _chat_sync(messages, cfg, max_tokens=max_tokens)
-    data = _extract_json(response)
+    if not cfg:
+        # Last resort: return static findings only
+        if static_findings:
+            return {
+                "vulnerabilities": static_findings,
+                "summary": f"Found {len(static_findings)} issue(s) (static analysis only)",
+                "_raw": "",
+            }
+        return {
+            "vulnerabilities": [],
+            "summary": "No vulnerabilities found.",
+            "_raw": "",
+        }
+    
+    try:
+        messages = _get_scan(f"```{lang}\n{code}\n```", model, language=lang)
+        response = _chat_sync(messages, cfg, max_tokens=max_tokens)
+        data = _extract_json(response)
 
-    merged = {f["cwe"]: f for f in static_findings}
-    if data:
-        for v in data.get("vulnerabilities", []):
-            cwe = v.get("cwe", "")
-            validated = _validate_cwe(cwe)
-            if validated:
-                v["cwe"] = validated
-                sev = (v.get("severity", "") or "").lower()
-                if "confidence" not in v or v.get("confidence") is None:
-                    v["confidence"] = 0.9 if sev in ("critical", "high") else 0.7
-                if validated not in merged:
-                    merged[validated] = v
+        merged = {f["cwe"]: f for f in static_findings}
+        if data and not data.get("parse_error"):
+            for v in data.get("vulnerabilities", []):
+                cwe = v.get("cwe", "")
+                validated = _validate_cwe(cwe)
+                if validated:
+                    v["cwe"] = validated
+                    sev = (v.get("severity", "") or "").lower()
+                    if "confidence" not in v or v.get("confidence") is None:
+                        v["confidence"] = 0.9 if sev in ("critical", "high") else 0.7
+                    if validated not in merged:
+                        merged[validated] = v
 
-    vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
-    n_vulns = len(vuln_list)
-    if n_vulns == 0:
-        summary = "No vulnerabilities found."
-    else:
-        cwe_strs = ", ".join(v["cwe"] for v in vuln_list[:5])
-        summary = f"Found {n_vulns} issue(s): {cwe_strs}"
+        vuln_list = sorted(merged.values(), key=lambda x: -x.get("confidence", 0))
+        n_vulns = len(vuln_list)
+        if n_vulns == 0:
+            summary = "No vulnerabilities found."
+        else:
+            cwe_strs = ", ".join(v["cwe"] for v in vuln_list[:5])
+            summary = f"Found {n_vulns} issue(s): {cwe_strs}"
 
-    return {
-        "vulnerabilities": vuln_list,
-        "summary": summary,
-        "_raw": response,
-    }
+        return {
+            "vulnerabilities": vuln_list,
+            "summary": summary,
+            "_raw": response,
+        }
+    except Exception as e:
+        # LLM failed, return static findings if any
+        if static_findings:
+            return {
+                "vulnerabilities": static_findings,
+                "summary": f"Found {len(static_findings)} issue(s) (static analysis, LLM error: {str(e)[:50]})",
+                "_raw": str(e),
+            }
+        return {
+            "vulnerabilities": [],
+            "summary": f"Scan failed: {str(e)[:100]}",
+            "_raw": str(e),
+        }
 
 
 def _get_model_config(model: str):

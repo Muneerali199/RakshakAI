@@ -1,43 +1,58 @@
 """Tool implementations — OpenAI function-calling format + agent dispatch."""
 from __future__ import annotations
-import os, json, re, subprocess
+import os
+import re
+import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 # ── Tool Implementations ────────────────────────────────────
 
 class FileOpsTool:
+    """Bounded, ignore-aware file access for an agent workspace."""
+
+    IGNORED_DIRS = {
+        ".git", ".hg", ".svn", ".idea", ".vscode", "node_modules",
+        "vendor", "dist", "build", "coverage", ".next", ".nuxt",
+        ".venv", "venv", "__pycache__", ".rakshak_index",
+    }
+    MAX_SEARCH_FILES = 20_000
+    MAX_SEARCH_MATCHES = 500
+
     def __init__(self, allowed_dirs: list[str] | None = None):
-        dirs = allowed_dirs or ["."]
+        dirs = allowed_dirs or [os.getcwd()]
         self.allowed_dirs = [Path(d).resolve() for d in dirs]
-        # Also allow common user directories
-        home = Path.home()
-        desktop = home / "Desktop"
-        if desktop.exists() and desktop not in self.allowed_dirs:
-            self.allowed_dirs.append(desktop)
-        if home not in self.allowed_dirs:
-            self.allowed_dirs.append(home)
 
     def _safe(self, path: str) -> bool:
         p = Path(path).resolve()
-        return any(str(p).startswith(str(d)) for d in self.allowed_dirs)
+        return any(p == directory or directory in p.parents for directory in self.allowed_dirs)
+
+    def _resolve(self, path: str) -> Path:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = self.allowed_dirs[0] / candidate
+        return candidate.resolve()
+
+    @classmethod
+    def _is_ignored(cls, path: Path) -> bool:
+        return any(part in cls.IGNORED_DIRS for part in path.parts)
 
     def read_file(self, path: str) -> str | None:
-        if not self._safe(path):
+        p = self._resolve(path)
+        if not self._safe(str(p)):
             return None
         try:
-            p = Path(path)
             if p.exists() and p.stat().st_size <= 1_000_000:
                 return p.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return None
 
     def write_file(self, path: str, content: str) -> bool:
-        if not self._safe(path):
+        p = self._resolve(path)
+        if not self._safe(str(p)):
             return False
         try:
-            p = Path(path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             return True
@@ -45,32 +60,46 @@ class FileOpsTool:
             return False
 
     def list_files(self, directory: str, pattern: str = "*") -> list[str]:
-        if not self._safe(directory):
+        root = self._resolve(directory)
+        if not self._safe(str(root)):
             return []
         try:
-            return [str(f.relative_to(directory)) for f in Path(directory).glob(pattern) if f.is_file()]
+            return [str(f.relative_to(root)) for f in root.glob(pattern)
+                    if f.is_file() and not self._is_ignored(f)][:self.MAX_SEARCH_FILES]
         except Exception:
             return []
 
     def search_in_files(self, directory: str, pattern: str, file_pattern: str = "*.py") -> list[dict]:
-        if not self._safe(directory):
+        root = self._resolve(directory)
+        if not self._safe(str(root)):
             return []
         results = []
         try:
-            for fp in Path(directory).rglob(file_pattern):
-                if not fp.is_file() or not self._safe(str(fp)):
-                    continue
-                try:
-                    content = fp.read_text("utf-8", errors="replace")
-                    matches = list(re.finditer(pattern, content, re.IGNORECASE))
-                    if matches:
-                        results.append({
-                            "file": str(fp.relative_to(directory)),
-                            "matches": len(matches),
-                            "lines": [content[:m.start()].count("\n") + 1 for m in matches[:5]],
-                        })
-                except Exception:
-                    pass
+            files_seen = 0
+            for current, dirs, files in os.walk(root):
+                dirs[:] = [d for d in dirs if d not in self.IGNORED_DIRS]
+                for name in files:
+                    fp = Path(current) / name
+                    if not fp.match(file_pattern):
+                        continue
+                    files_seen += 1
+                    if files_seen > self.MAX_SEARCH_FILES:
+                        return results
+                    if not fp.is_file() or not self._safe(str(fp)):
+                        continue
+                    try:
+                        content = fp.read_text("utf-8", errors="replace")
+                        matches = list(re.finditer(pattern, content, re.IGNORECASE))
+                        if matches:
+                            results.append({
+                                "file": str(fp.relative_to(root)),
+                                "matches": len(matches),
+                                "lines": [content[:m.start()].count("\n") + 1 for m in matches[:5]],
+                            })
+                            if len(results) >= self.MAX_SEARCH_MATCHES:
+                                return results
+                    except Exception:
+                        pass
         except Exception:
             pass
         return results
@@ -79,6 +108,7 @@ class FileOpsTool:
 class ShellTool:
     ALLOWED = {"ls", "cat", "grep", "find", "wc", "head", "tail", "sort", "uniq",
                "git", "npm", "pip", "python", "python3", "node", "mkdir", "cp", "mv",
+               "pytest", "ruff", "cargo", "go", "mvn", "gradle", "dotnet", "make",
                "echo", "pwd", "which", "file", "du", "df", "ps", "env"}
 
     def execute(self, command: str, timeout: int = 30, cwd: str | None = None) -> dict:
@@ -93,6 +123,11 @@ class ShellTool:
         if isinstance(cwd, str) and not cwd.strip():
             cwd = None
         try:
+            if cwd:
+                candidate = Path(cwd).resolve()
+                root = file_ops.allowed_dirs[0]
+                if candidate != root and root not in candidate.parents:
+                    return {"success": False, "error": "Working directory is outside the workspace"}
             r = subprocess.run(parts, capture_output=True, text=True, timeout=timeout, cwd=cwd)
             return {"success": r.returncode == 0, "stdout": r.stdout[:5000], "stderr": r.stderr[:2000], "exit_code": r.returncode}
         except subprocess.TimeoutExpired:

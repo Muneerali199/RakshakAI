@@ -31,6 +31,20 @@ interface ProviderInfo {
   available: boolean;
 }
 
+interface NotionExportRequest {
+  findings: Array<{
+    file: string;
+    vulnerability: string;
+    cwe: string;
+    severity: string;
+    confidence: number;
+    root_cause: string;
+    secure_fix: string;
+  }>;
+  project_name: string;
+  scan_date: string;
+}
+
 const RAKSHAK_DIAG = 'rakshakai-v2';
 const abortControllers = new Map<string, AbortController>();
 const findingsCache = new Map<string, Finding>();
@@ -46,6 +60,7 @@ function getConfig() {
     minConfidence: cfg.get<number>('minConfidence', 0.6),
     provider: cfg.get<string>('provider', 'ollama'),
     model: cfg.get<string>('model', ''),
+    notionServerUrl: cfg.get<string>('notionServerUrl', cfg.get<string>('serverUrl', 'http://localhost:8080')),
   };
 }
 
@@ -597,6 +612,16 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Return a safe HTTP(S) URL for use in an extension webview. */
+function safeExternalUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Scan ───
 
 async function scanDocument(doc: vscode.TextDocument): Promise<void> {
@@ -972,6 +997,8 @@ class RakshakTreeProvider implements vscode.TreeDataProvider<FindingTreeItem> {
 // ─── Sidebar Webview Panel ───
 
 class RakshakSidebarProvider implements vscode.WebviewViewProvider {
+  private webviewView?: vscode.WebviewView;
+
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
   resolveWebviewView(
@@ -979,8 +1006,10 @@ class RakshakSidebarProvider implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
   ): void {
+    this.webviewView = webviewView;
     webviewView.webview.options = { enableScripts: true };
     webviewView.webview.html = this.getHtmlContent();
+    webviewView.onDidDispose(() => { this.webviewView = undefined; });
 
     // Handle messages from webview
     webviewView.webview.onDidReceiveMessage(async (message) => {
@@ -997,8 +1026,21 @@ class RakshakSidebarProvider implements vscode.WebviewViewProvider {
         case 'chooseProvider':
           vscode.commands.executeCommand('rakshakai.chooseProvider');
           break;
+        case 'exportToNotion':
+          vscode.commands.executeCommand('rakshakai.exportToNotion');
+          break;
+        case 'setupGitHook':
+          vscode.commands.executeCommand('rakshakai.setupPrecommit');
+          break;
       }
     });
+  }
+
+  /** Re-render the sidebar so the Notion export button reflects current findings. */
+  refresh(): void {
+    if (this.webviewView) {
+      this.webviewView.webview.html = this.getHtmlContent();
+    }
   }
 
   private getHtmlContent(): string {
@@ -1304,6 +1346,18 @@ class RakshakSidebarProvider implements vscode.WebviewViewProvider {
   </div>
 
   <div class="action-section">
+    <div class="section-title">Export & Protection</div>
+    <button class="action-btn secondary" onclick="exportToNotion()" ${total === 0 ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
+      <span>📋</span>
+      <span>Export to Notion</span>
+    </button>
+    <button class="action-btn secondary" onclick="setupGitHook()">
+      <span>🔒</span>
+      <span>Setup Git Hook</span>
+    </button>
+  </div>
+
+  <div class="action-section">
     <div class="section-title">Settings</div>
     <button class="action-btn secondary" onclick="chooseProvider()">
       <span>⚙️</span>
@@ -1317,6 +1371,8 @@ class RakshakSidebarProvider implements vscode.WebviewViewProvider {
     function scanWorkspace() { vscode.postMessage({ command: 'scanWorkspace' }); }
     function openDashboard() { vscode.postMessage({ command: 'dashboard' }); }
     function chooseProvider() { vscode.postMessage({ command: 'chooseProvider' }); }
+    function exportToNotion() { vscode.postMessage({ command: 'exportToNotion' }); }
+    function setupGitHook() { vscode.postMessage({ command: 'setupGitHook' }); }
   </script>
 </body>
 </html>`;
@@ -1346,6 +1402,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (ed) {
         await scanDocument(ed.document);
         treeProvider.refresh();
+        sidebarProvider.refresh();
       }
     })
   );
@@ -1358,6 +1415,7 @@ export function activate(context: vscode.ExtensionContext) {
         async () => {
           for (const d of docs) await scanDocument(d);
           treeProvider.refresh();
+          sidebarProvider.refresh();
         }
       );
     })
@@ -1517,7 +1575,12 @@ export function activate(context: vscode.ExtensionContext) {
     <div class="section">
       <div class="section-title">📚 References</div>
       <div class="content">
-        ${f.references.map(ref => `<div style="margin-bottom: 4px;">• <a href="${ref}" style="color: #22d3ee;">${ref}</a></div>`).join('')}
+        ${f.references.map(ref => {
+          const url = safeExternalUrl(ref);
+          return url
+            ? `<div style="margin-bottom: 4px;">• <a href="${escapeHtml(url)}" style="color: #22d3ee;">${escapeHtml(url)}</a></div>`
+            : `<div style="margin-bottom: 4px;">• ${escapeHtml(ref)}</div>`;
+        }).join('')}
       </div>
     </div>
   ` : ''}
@@ -1678,17 +1741,222 @@ export function activate(context: vscode.ExtensionContext) {
       };
 
       try {
-        const r = await axios.post(`${cfg.serverUrl}/v2/notion/report`, payload, { timeout: 15_000 });
+        const r = await axios.post(`${cfg.notionServerUrl}/v2/notion/report`, payload, { timeout: 15_000 });
+        if (r.data.queued) {
+          vscode.window.showWarningMessage(
+            `Notion is unavailable; the report was queued (${r.data.queue_size} pending).`
+          );
+          return;
+        }
         const url = r.data.url;
         vscode.window.showInformationMessage(
           `📋 Notion Report Created`,
           'Open in Notion'
         ).then(choice => {
-          if (choice && url) vscode.env.openExternal(url);
+          if (choice && url) vscode.env.openExternal(vscode.Uri.parse(url));
         });
       } catch (e: any) {
         vscode.window.showErrorMessage(`Notion: ${e?.response?.data?.detail || e?.message || 'failed'}`);
       }
+    })
+  );
+
+  // ─── Git Pre-commit Hook ───
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rakshakai.setupPrecommit', async () => {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders) {
+        vscode.window.showErrorMessage('No workspace folder open');
+        return;
+      }
+
+      const rootPath = workspaceFolders[0].uri.fsPath;
+      const gitHooksPath = `${rootPath}/.git/hooks`;
+      const preCommitPath = `${gitHooksPath}/pre-commit`;
+
+      // Check if .git exists
+      const fs = require('fs');
+      if (!fs.existsSync(`${rootPath}/.git`)) {
+        vscode.window.showErrorMessage('Not a git repository');
+        return;
+      }
+
+      // Create pre-commit hook script
+      const hookScript = `#!/bin/bash
+# RakshakAI Pre-commit Hook - Blocks commits if vulnerabilities found
+
+echo "🛡️  RakshakAI: Scanning staged files..."
+
+# Get staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\\.(py|js|ts|java|go|rs|c|cpp|php|rb)$' || true)
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "✅ No code files to scan"
+  exit 0
+fi
+
+# Scan each staged file
+HAS_VULN=0
+CRITICAL_COUNT=0
+HIGH_COUNT=0
+
+for FILE in $STAGED_FILES; do
+  if [ -f "$FILE" ]; then
+    echo "  Scanning: $FILE"
+    
+    # Call RakshakAI server to scan
+    RESULT=$(curl -s -X POST ${cfg.serverUrl}/v2/scan \\
+      -H "Content-Type: application/json" \\
+      --data-binary "$(python3 -c 'import json, pathlib, sys; path = pathlib.Path(sys.argv[1]); print(json.dumps({"code": path.read_text(encoding="utf-8"), "language": path.suffix.lstrip("."), "provider": "ollama"}))' "$FILE")" \\
+      2>/dev/null || echo '{"finding":{}}')
+    
+    # Check if vulnerability found
+    CWE=$(echo "$RESULT" | grep -o '"cwe":"[^"]*"' | cut -d'"' -f4 || true)
+    SEVERITY=$(echo "$RESULT" | grep -o '"severity":"[^"]*"' | cut -d'"' -f4 || true)
+    VULN=$(echo "$RESULT" | grep -o '"vulnerability":"[^"]*"' | cut -d'"' -f4 || true)
+    
+    if [ ! -z "$CWE" ]; then
+      echo "  ❌ Found: $CWE - $VULN ($SEVERITY)"
+      HAS_VULN=1
+      
+      if [ "$SEVERITY" = "critical" ]; then
+        CRITICAL_COUNT=$((CRITICAL_COUNT + 1))
+      elif [ "$SEVERITY" = "high" ]; then
+        HIGH_COUNT=$((HIGH_COUNT + 1))
+      fi
+    fi
+  fi
+done
+
+# Block commit if vulnerabilities found
+if [ $HAS_VULN -eq 1 ]; then
+  echo ""
+  echo "🚨 COMMIT BLOCKED!"
+  echo "   Found vulnerabilities: $CRITICAL_COUNT critical, $HIGH_COUNT high"
+  echo ""
+  echo "Please fix the vulnerabilities before committing."
+  echo "Or use: git commit --no-verify to bypass (not recommended)"
+  echo ""
+  echo "Run 'rakshakai' CLI to scan and fix issues."
+  exit 1
+fi
+
+echo "✅ No vulnerabilities found - commit allowed"
+exit 0
+`;
+
+      // Write hook file
+      try {
+        if (!fs.existsSync(gitHooksPath)) {
+          fs.mkdirSync(gitHooksPath, { recursive: true });
+        }
+        
+        fs.writeFileSync(preCommitPath, hookScript);
+        fs.chmodSync(preCommitPath, '755'); // Make executable
+        
+        vscode.window.showInformationMessage(
+          '✅ Git pre-commit hook installed! Commits will be blocked if vulnerabilities are found.',
+          'Test Hook',
+          'Disable Hook'
+        ).then(choice => {
+          if (choice === 'Test Hook') {
+            vscode.commands.executeCommand('rakshakai.testPrecommit');
+          } else if (choice === 'Disable Hook') {
+            fs.unlinkSync(preCommitPath);
+            vscode.window.showInformationMessage('Pre-commit hook disabled');
+          }
+        });
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Failed to install hook: ${e.message}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rakshakai.testPrecommit', async () => {
+      const terminal = vscode.window.createTerminal('RakshakAI Pre-commit Test');
+      terminal.show();
+      terminal.sendText('echo "Testing pre-commit hook..."');
+      terminal.sendText('git diff --cached --name-only || echo "No staged files"');
+      terminal.sendText('.git/hooks/pre-commit');
+    })
+  );
+
+  // ─── Notion Export All ───
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rakshakai.exportToNotion', async () => {
+      const cfg = getConfig();
+      const findings: { file: string; finding: Finding }[] = [];
+      
+      for (const [uri, diagList] of vscode.languages.getDiagnostics()) {
+        for (const d of diagList) {
+          if (d.source === RAKSHAK_DIAG) {
+            const f = findingsCache.get(uri.toString());
+            if (f) findings.push({ file: uri.fsPath, finding: f });
+          }
+        }
+      }
+
+      if (findings.length === 0) {
+        vscode.window.showInformationMessage('No vulnerabilities to export');
+        return;
+      }
+
+      const workspaceName = vscode.workspace.name || 'Unknown Project';
+      
+      vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Exporting to Notion...',
+        cancellable: false
+      }, async (progress) => {
+        progress.report({ increment: 0, message: `Exporting ${findings.length} findings...` });
+
+        try {
+          const payload = {
+            findings: findings.map(f => {
+              const uri = vscode.Uri.file(f.file);
+              const diagnostic = vscode.languages.getDiagnostics(uri)
+                .find(d => d.source === RAKSHAK_DIAG);
+              const document = vscode.workspace.textDocuments
+                .find(d => d.uri.toString() === uri.toString());
+              return {
+                file: f.file,
+                vulnerability: f.finding.vulnerability || 'Security Finding',
+                cwe: f.finding.cwe || '',
+                severity: f.finding.severity || 'medium',
+                confidence: f.finding.confidence || 0,
+                root_cause: f.finding.root_cause || '',
+                attack_scenario: f.finding.attack_scenario || '',
+                secure_fix: f.finding.secure_fix || '',
+                patched_code: f.finding.patched_code || '',
+                references: f.finding.references || [],
+                language: document?.languageId || '',
+                line_number: diagnostic ? diagnostic.range.start.line + 1 : 0,
+                original_code: diagnostic && document ? document.getText(diagnostic.range) : '',
+              };
+            }),
+            project_name: workspaceName,
+            scan_date: new Date().toISOString(),
+          };
+
+          const r = await axios.post(`${cfg.notionServerUrl}/v2/notion/export-batch`, payload, { timeout: 30_000 });
+          
+          progress.report({ increment: 100 });
+          
+          vscode.window.showInformationMessage(
+            `✅ Created ${r.data.created} complete Notion report${r.data.created === 1 ? '' : 's'}`,
+            'Open Notion'
+          ).then(choice => {
+            if (choice && r.data.url) {
+              vscode.env.openExternal(vscode.Uri.parse(r.data.url));
+            }
+          });
+        } catch (e: any) {
+          vscode.window.showErrorMessage(`Export failed: ${e?.response?.data?.detail || e?.message || 'Unknown error'}`);
+        }
+      });
     })
   );
 
@@ -1699,6 +1967,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (getConfig().scanOnSave) {
         await scanDocument(doc);
         treeProvider.refresh();
+        sidebarProvider.refresh();
       }
     })
   );

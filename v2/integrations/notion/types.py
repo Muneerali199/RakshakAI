@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 
 class SeverityLevel(str, Enum):
@@ -104,7 +103,7 @@ class DatabaseSchema:
     title: str = "RakshakAI Security Center"
     description: str = "AI-powered vulnerability tracking and security operations"
     properties: dict = field(default_factory=lambda: {
-        "Title": {"title": {}},
+        "Name": {"title": {}},
         "Severity": {
             "select": {
                 "options": [

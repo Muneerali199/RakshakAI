@@ -1,6 +1,5 @@
 """FastAPI routes for Notion Security Hub integration."""
 from __future__ import annotations
-import os
 import logging
 from typing import Optional
 
@@ -12,7 +11,7 @@ from v2.integrations.notion.database import NotionDatabase
 from v2.integrations.notion.pages import NotionPageBuilder
 from v2.integrations.notion.sync import NotionSync
 from v2.integrations.notion.types import (
-    VulnerabilityReport, SeverityLevel, FindingStatus, NotionConfig,
+    VulnerabilityReport, SeverityLevel, FindingStatus,
 )
 
 log = logging.getLogger("rakshakai.notion.api")
@@ -96,6 +95,32 @@ class SetupRequest(BaseModel):
     parent_page_id: str
 
 
+class BatchFindingRequest(BaseModel):
+    """A vulnerability finding exported by a client in a batch."""
+
+    file: str = Field(..., min_length=1)
+    vulnerability: str = Field(..., min_length=1)
+    cwe: str = Field("")
+    severity: str = Field("Medium")
+    confidence: float = Field(0.0, ge=0, le=1)
+    root_cause: str = Field("")
+    attack_scenario: str = Field("")
+    secure_fix: str = Field("")
+    patched_code: str = Field("")
+    original_code: str = Field("")
+    references: list[str] = Field(default_factory=list)
+    language: str = Field("")
+    line_number: int = Field(0, ge=0)
+
+
+class ExportBatchRequest(BaseModel):
+    """The complete set of findings from a workspace scan."""
+
+    findings: list[BatchFindingRequest] = Field(..., min_length=1, max_length=100)
+    project_name: str = Field("Unknown Project")
+    scan_date: str = Field("")
+
+
 # ─── Routes ───
 
 @router.get("/health")
@@ -166,6 +191,63 @@ async def create_report(req: CreateReportRequest):
     }
 
 
+@router.post("/export-batch")
+async def export_batch(req: ExportBatchRequest):
+    """Create one complete Notion report page for every finding in a scan."""
+    if not get_client().is_configured:
+        raise HTTPException(400, "Notion not configured")
+    if not get_db().database_id:
+        raise HTTPException(400, "Notion database not configured. Run /v2/notion/setup first")
+
+    sync = get_sync()
+    created: list[dict[str, str]] = []
+    queued = 0
+    for finding in req.findings:
+        try:
+            severity = SeverityLevel(finding.severity.capitalize())
+        except ValueError as exc:
+            raise HTTPException(422, f"Invalid severity: {finding.severity}") from exc
+
+        report = VulnerabilityReport(
+            title=finding.vulnerability,
+            severity=severity,
+            confidence=finding.confidence,
+            cwe_id=finding.cwe,
+            vulnerability_type=finding.vulnerability,
+            repository=req.project_name,
+            file_path=finding.file,
+            line_number=finding.line_number,
+            language=finding.language,
+            description=(
+                f"{finding.vulnerability} detected in {finding.file}"
+                + (f" during scan {req.scan_date}" if req.scan_date else "")
+            ),
+            root_cause=finding.root_cause,
+            attack_scenario=finding.attack_scenario,
+            secure_fix=finding.secure_fix,
+            patched_code=finding.patched_code,
+            original_code=finding.original_code,
+            references=finding.references,
+            tags=[finding.language] if finding.language else [],
+        )
+        page_id = sync.report_vulnerability(report)
+        if page_id:
+            created.append({
+                "page_id": page_id,
+                "url": f"https://notion.so/{page_id.replace('-', '')}",
+            })
+        else:
+            queued += 1
+
+    return {
+        "created": len(created),
+        "queued": queued,
+        "pages": created,
+        "url": created[0]["url"] if created else None,
+        "message": f"Created {len(created)} complete Notion report(s)",
+    }
+
+
 @router.post("/report/{page_id}/status")
 async def update_status(page_id: str, req: UpdateStatusRequest):
     try:
@@ -224,7 +306,6 @@ async def get_dashboard():
 
 @router.post("/webhook")
 async def notion_webhook(request: Request):
-    body = await request.body()
     event = await request.json()
     event_type = event.get("type", "")
     log.info(f"Notion webhook: {event_type}")

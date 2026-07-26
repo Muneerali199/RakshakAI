@@ -1,7 +1,5 @@
 """Notion page builder with rich formatting."""
 from __future__ import annotations
-from typing import Optional
-
 from v2.integrations.notion.types import VulnerabilityReport, SeverityLevel, FindingStatus
 
 

@@ -167,7 +167,13 @@ class RakshakREPL:
             from v2.cli.skills import SkillRegistry
             from v2.cli.agent import ReActAgent, AgentMode
             self._skills = SkillRegistry()
-            self._agent = ReActAgent(mode=AgentMode.INTERACTIVE, tools=TOOLS, model=registry.active)
+            self._agent = ReActAgent(
+                mode=AgentMode.INTERACTIVE,
+                tools=TOOLS,
+                model=registry.active,
+                max_iterations=40,
+                context_budget=24000,
+            )
         return self._agent
     
     def _ensure_code_index(self):
@@ -1641,7 +1647,11 @@ dependencies = ["click"]
             collected.append(tok)
 
         with StreamingPanel() as panel:
-            result = agent.run(args.strip(), on_token=panel.update)
+            result = agent.run(
+                args.strip(),
+                context={"cwd": self.current_dir},
+                on_token=panel.update,
+            )
 
         self._show_agent_result(result)
         return True
