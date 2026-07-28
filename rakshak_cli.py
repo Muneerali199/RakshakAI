@@ -881,7 +881,13 @@ def local_scan_file(path: str) -> list[dict]:
             else:
                 regex, label, cwe, sev, msg = pattern
 
-            if re.search(regex, line, re.IGNORECASE):
+            try:
+                matched = re.search(regex, line, re.IGNORECASE)
+            except re.error:
+                # A malformed signature must not make an offline scan fail.
+                # Keep scanning with the remaining rules.
+                continue
+            if matched:
                 key = f"{label}:{msg}"
                 if key not in seen_keys:
                     seen_keys.add(key)
@@ -894,6 +900,35 @@ def local_scan_file(path: str) -> list[dict]:
                     })
 
     return findings
+
+
+def _local_vuln_match(code: str) -> Optional[tuple[str, str, str, str, str]]:
+    """Return the first offline finding in review-friendly form.
+
+    Diffs do not have a reliable filename, so this deliberately evaluates the
+    language-neutral rules and the common SQL-concatenation shape as a fallback.
+    """
+    for line in code.splitlines():
+        for pattern in LOCAL_PATTERNS:
+            if len(pattern) == 6:
+                continue
+            regex, label, cwe, severity, message = pattern
+            try:
+                matched = re.search(regex, line, re.IGNORECASE)
+            except re.error:
+                continue
+            if matched:
+                return (
+                    label.replace("_", " ").title(), cwe, severity, message,
+                    "Validate untrusted input and use a safe, parameterized API.",
+                )
+        if re.search(r"\b(?:SELECT|INSERT|UPDATE|DELETE)\b.*(?:\+|%|\.format\(|f['\"])", line, re.IGNORECASE):
+            return (
+                "SQL injection", "CWE-89", "critical",
+                "SQL query is built from untrusted input.",
+                "Use parameterized queries and pass user values separately.",
+            )
+    return None
 
 
 def cmd_review(args: argparse.Namespace, cfg: dict) -> int:

@@ -415,7 +415,9 @@ RakshakAI integrates directly with Notion as a **Security Hub**. Every vulnerabi
 
 ---
 
-## Impact
+## Team Vision
+We are **Code and Canvas**. We didn't just build a security tool; we built an **intelligent security copilot**. We believe that security shouldn't be a separate, slow process—it should be part of the developer's creative workflow. By merging high-precision static analysis with the reasoning power of modern LLMs, we're not just finding bugs; we're teaching developers to write secure code by default. We are here to prove that secure development can be the fastest development.
+
 
 **Who benefits and how?**
 

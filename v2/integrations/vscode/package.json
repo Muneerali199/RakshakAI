@@ -1,30 +1,35 @@
 {
-  "name": "rakshakai-v2",
-  "displayName": "RakshakAI v2 — Security Copilot",
-  "description": "AI security reviewer. Scans code on save, detects vulnerabilities, one-click AI fix.",
-  "version": "2.1.0",
-  "publisher": "RakshakAI",
-  "license": "Apache-2.0",
+  "name": "rakshakai-security",
+  "displayName": "RakshakAI — AI Security Code Review",
+  "description": "AI-powered security scanner. Detects vulnerabilities, generates fixes, syncs to Notion. Supports 12+ LLM providers.",
+  "version": "2.1.1",
+  "publisher": "rakshakai",
+  "license": "MIT",
+  "icon": "icon.png",
   "engines": { "vscode": "^1.86.0" },
-  "categories": ["Other", "Linters", "Programming Languages"],
-  "keywords": ["security", "vulnerability", "cwe", "sast", "ai", "code-review", "copilot"],
-  "activationEvents": [
-    "onLanguage:python", "onLanguage:javascript", "onLanguage:typescript",
-    "onLanguage:java", "onLanguage:go", "onLanguage:rust",
-    "onLanguage:c", "onLanguage:cpp", "onLanguage:php",
-    "onLanguage:csharp", "onLanguage:ruby"
-  ],
+  "categories": ["Security", "Linters", "Programming Languages"],
+  "keywords": ["security", "vulnerability", "cwe", "sast", "ai", "code-review", "copilot", "scanner", "owasp"],
+  "activationEvents": [],
   "main": "./out/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Muneerali199/RakshakAI-Security"
+  },
+  "bugs": {
+    "url": "https://github.com/Muneerali199/RakshakAI-Security/issues"
+  },
+  "homepage": "https://github.com/Muneerali199/RakshakAI-Security#readme",
+  "markdown": "README.md",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{ "id": "rakshak", "title": "RakshakAI", "icon": "$(shield)" }]
+      "activitybar": [{ "id": "rakshak", "title": "RakshakAI", "icon": "resources/shield.svg" }]
     },
     "views": {
       "rakshak": [
         {
           "type": "webview",
           "id": "rakshak-sidebar",
-          "name": "Security Overview",
+          "name": "Security Dashboard",
           "icon": "$(dashboard)",
           "contextualTitle": "RakshakAI"
         },
@@ -40,51 +45,62 @@
       {
         "view": "rakshak-files",
         "contents": [
-          "### 🛡️ RakshakAI Security Scanner\nNo vulnerabilities detected yet.\n\n[Scan Current File](command:rakshakai.scanFile)\n\n[Scan Workspace](command:rakshakai.scanWorkspace)\n\n[Open Dashboard](command:rakshakai.dashboard)\n\n[Choose Provider](command:rakshakai.chooseProvider)"
+          "### 🛡️ RakshakAI Security Scanner\nScan your code for vulnerabilities with AI.\n\n[Scan Current File](command:rakshakai.scanFile)\n\n[Scan Workspace](command:rakshakai.scanWorkspace)\n\n[Export All to Notion](command:rakshakai.exportToNotion)\n\n[Open Dashboard](command:rakshakai.dashboard)\n\n[Choose Provider](command:rakshakai.chooseProvider)"
         ]
       }
     ],
     "configuration": {
-      "title": "RakshakAI v2",
+      "title": "RakshakAI",
       "properties": {
         "rakshakai.serverUrl": {
-          "type": "string", "default": "http://localhost:8080",
-          "description": "Server URL"
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "URL of the RakshakAI server"
         },
         "rakshakai.scanOnSave": {
-          "type": "boolean", "default": true,
-          "description": "Scan on save"
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan files when saved"
         },
         "rakshakai.severityFilter": {
-          "type": "array", "default": ["critical", "high", "medium"],
-          "description": "Severity filter"
+          "type": "array",
+          "default": ["critical", "high", "medium"],
+          "items": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "description": "Minimum severity levels to show"
         },
         "rakshakai.minConfidence": {
-          "type": "number", "default": 0.6, "minimum": 0, "maximum": 1,
-          "description": "Min confidence"
+          "type": "number",
+          "default": 0.6,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum confidence threshold (0-1)"
         },
         "rakshakai.provider": {
-          "type": "string", "default": "ollama",
-          "enum": ["ollama", "groq", "fireworks", "nebius", "huggingface"],
+          "type": "string",
+          "default": "groq",
+          "enum": ["groq", "nebius", "ollama", "fireworks", "huggingface"],
           "enumDescriptions": [
-            "Local Ollama (free, private)",
-            "Groq (fast, free tier)",
-            "Fireworks AI (paid)",
-            "Nebius AI (Kimi K2.7, Qwen 3.5)",
-            "HuggingFace (free tier)"
+            "Groq — Fast, free tier (Llama 3.3 70B)",
+            "Nebius — Kimi K2.7, Qwen 3.5, DeepSeek V4",
+            "Ollama — Local, free, private",
+            "Fireworks AI — Fast, paid",
+            "HuggingFace — Free tier"
           ],
-          "description": "LLM provider"
+          "description": "LLM provider for scanning"
         },
         "rakshakai.model": {
-          "type": "string", "default": "",
-          "description": "Model ID override"
+          "type": "string",
+          "default": "",
+          "description": "Model ID override (leave empty for provider default)"
         },
         "rakshakai.notionEnabled": {
-          "type": "boolean", "default": false,
+          "type": "boolean",
+          "default": false,
           "description": "Enable Notion Security Hub integration"
         },
         "rakshakai.notionServerUrl": {
-          "type": "string", "default": "http://localhost:8080",
+          "type": "string",
+          "default": "http://localhost:8080",
           "description": "Server URL for Notion API"
         }
       }
@@ -92,18 +108,52 @@
     "commands": [
       { "command": "rakshakai.scanFile", "title": "Scan Current File", "icon": "$(search)" },
       { "command": "rakshakai.scanWorkspace", "title": "Scan Workspace", "icon": "$(folder-opened)" },
-      { "command": "rakshakai.dashboard", "title": "Open Dashboard", "icon": "$(graph)" },
+      { "command": "rakshakai.dashboard", "title": "Open Security Dashboard", "icon": "$(graph)" },
       { "command": "rakshakai.chooseProvider", "title": "Choose Provider & Model", "icon": "$(settings-gear)" },
       { "command": "rakshakai.showLastFinding", "title": "Show Last Finding", "icon": "$(info)" },
       { "command": "rakshakai.showFindingDetails", "title": "Show Finding Details", "icon": "$(file-text)" },
       { "command": "rakshakai.applyPatch", "title": "Apply Suggested Patch", "icon": "$(code)" },
-      { "command": "rakshakai.notionReport", "title": "Create Notion Security Report", "icon": "$(browser)" }
-    ]
+      { "command": "rakshakai.notionReport", "title": "Create Notion Report", "icon": "$(browser)" },
+      { "command": "rakshakai.exportToNotion", "title": "Export All to Notion", "icon": "$(export)" },
+      { "command": "rakshakai.setupPrecommit", "title": "Setup Git Pre-commit Hook", "icon": "$(lock)" },
+      { "command": "rakshakai.testPrecommit", "title": "Test Pre-commit Hook", "icon": "$(debug-start)" }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "rakshakai.applyPatch",
+          "when": "editorHasSelection",
+          "group": "rakshakai"
+        },
+        {
+          "command": "rakshakai.notionReport",
+          "when": "editorHasSelection",
+          "group": "rakshakai"
+        }
+      ],
+      "editor/title": [
+        { "command": "rakshakai.scanFile", "group": "navigation" }
+      ],
+      "view/title": [
+        {
+          "command": "rakshakai.exportToNotion",
+          "when": "view == rakshak-sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "rakshakai.scanWorkspace",
+          "when": "view == rakshak-sidebar",
+          "group": "navigation@2"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "tsc -p .",
     "watch": "tsc -watch -p .",
-    "package": "vsce package"
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "lint": "eslint src --ext ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
