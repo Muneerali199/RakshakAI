@@ -61,7 +61,7 @@ class ModelCompleter:
         "/help", "/model", "/models", "/parallel",
         "/scan", "/scan-project", "/explain", "/fix",
         "/batch", "/watch", "/watch-stop",
-        "/diff", "/precommit", "/gate", "/test", "/share",
+        "/diff", "/precommit", "/gate", "/test", "/share", "/version",
         "/index", "/search",
         "/history", "/log", "/stats", "/dashboard",
         "/confirm", "/dismiss", "/cost",
@@ -560,6 +560,10 @@ class RakshakREPL:
             show_error("Usage: /gate [install|uninstall|status]")
         return True
 
+    def _handle_version(self, args: str) -> bool:
+        console.print("[dim]RakshakAI v2.1.2[/]")
+        return True
+    
     def _handle_gate(self, args: str) -> bool:
         return self._handle_precommit(args)
 
@@ -1999,6 +2003,7 @@ dependencies = ["click"]
                     "/diff": self._handle_diff,
                     "/precommit": self._handle_precommit,
                     "/gate": self._handle_gate,
+                    "/version": self._handle_version,
                     "/test": self._handle_test,
                     "/share": self._handle_share,
                     "/index": self._handle_index,
